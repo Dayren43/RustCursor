@@ -1,0 +1,106 @@
+use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::Write;
+
+use interception::{Filter, Interception, MouseFlags, MouseState, Stroke, is_mouse};
+
+use windows::Win32::{
+    Foundation::POINT,
+    UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos},
+};
+
+use rust_cursor::core::Monitor;
+use rust_cursor::remapper::{monitor_at_pixel, remap_transition};
+
+pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
+    let ic = Interception::new()
+        .expect("Failed to create Interception context — is the driver installed?");
+
+    ic.set_filter(is_mouse, Filter::MouseFilter(MouseState::MOVE));
+
+    let mut log = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open("cursor_log.txt")
+        .expect("Could not open cursor_log.txt");
+
+    writeln!(log, "=== session start ===").ok();
+    writeln!(log, "--- monitor layout ---").ok();
+    for m in monitors.values() {
+        let line = format!(
+            "  {} : x=[{}, {}]  y=[{}, {}]  ({}x{})  {:.0}dpi",
+            m.identifier,
+            m.bounds.x as i32,
+            (m.bounds.x + m.bounds.w) as i32,
+            m.bounds.y as i32,
+            (m.bounds.y + m.bounds.h) as i32,
+            m.resolution.0,
+            m.resolution.1,
+            m.dpi,
+        );
+        println!("{}", line);
+        writeln!(log, "{}", line).ok();
+    }
+    writeln!(log, "----------------------").ok();
+
+    {
+        let (sx, sy) = unsafe {
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            (pt.x, pt.y)
+        };
+        println!("Interception active — starting position ({}, {})", sx, sy);
+        writeln!(log, "start ({}, {})", sx, sy).ok();
+    }
+
+    loop {
+        let device = ic.wait();
+
+        let mut stroke = Stroke::Mouse {
+            state:       MouseState::empty(),
+            flags:       MouseFlags::empty(),
+            rolling:     0,
+            x:           0,
+            y:           0,
+            information: 0,
+        };
+        let received = ic.receive(device, std::slice::from_mut(&mut stroke));
+        if received <= 0 {
+            continue;
+        }
+
+        // Read actual cursor position before win32k processes this event to avoid
+        // drift from pointer-speed/acceleration scaling raw hardware deltas.
+        let (old_x, old_y) = unsafe {
+            let mut pt = POINT::default();
+            let _ = GetCursorPos(&mut pt);
+            (pt.x, pt.y)
+        };
+
+        if let Stroke::Mouse { ref flags, ref mut x, ref mut y, .. } = stroke {
+            if !flags.contains(MouseFlags::MOVE_ABSOLUTE) {
+                let new_x = old_x + *x;
+                let new_y = old_y + *y;
+
+                if let Some((cx, cy)) = remap_transition(old_x, old_y, new_x, new_y, &monitors) {
+                    let tag = {
+                        let src = monitor_at_pixel(old_x, old_y, &monitors).map(|m| &m.identifier);
+                        let dst = monitor_at_pixel(cx, cy, &monitors).map(|m| &m.identifier);
+                        if src != dst { "REMAP" } else { "BLOCK" }
+                    };
+                    println!("{}  ({},{}) → ({},{})  [raw ({},{})]", tag, old_x, old_y, cx, cy, new_x, new_y);
+                    writeln!(log, "{}  ({},{}) → ({},{})  [raw ({},{})]", tag, old_x, old_y, cx, cy, new_x, new_y).ok();
+
+                    *x = 0;
+                    *y = 0;
+                    unsafe {
+                        let _ = SetCursorPos(cx, cy);
+                    }
+                }
+            }
+        }
+
+        ic.send(device, std::slice::from_ref(&stroke));
+    }
+}
