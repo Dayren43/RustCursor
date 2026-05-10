@@ -14,6 +14,9 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
+use windows::Win32::System::StationsAndDesktops::{
+    CloseDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, OpenInputDesktop,
+};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
@@ -48,6 +51,20 @@ impl FocusGuard {
     /// i.e. the user is in a fullscreen game or a whitelisted process is in
     /// the foreground.
     pub fn should_skip_remap(&mut self) -> bool {
+        // UAC's consent prompt runs on a separate "secure desktop" our process
+        // can't reach. While it owns input, OpenInputDesktop fails for
+        // non-winlogon callers — use that as the signal to step fully aside,
+        // otherwise our SetCursorPos and zeroed deltas leak into the secure
+        // desktop's input and the consent prompt's cursor stops moving freely.
+        unsafe {
+            match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS) {
+                Ok(h) => {
+                    let _ = CloseDesktop(h);
+                }
+                Err(_) => return true,
+            }
+        }
+
         self.refresh_foreground();
 
         if let Ok(state) = unsafe { SHQueryUserNotificationState() }
