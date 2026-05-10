@@ -38,13 +38,29 @@ The `interception.dll` runtime library is not redistributed by the `interception
 - Drop a copy at `vendor/interception.dll` in the repo root (gitignored), or
 - Set the `INTERCEPTION_DLL` environment variable to the absolute path of `interception.dll`.
 
-The app runs silently with no console window. A two-tone tray icon appears in the notification area — right-click it and choose **Quit RustCursor** to exit. Per-stroke diagnostics are written to `cursor_log.txt` in the working directory.
+The app runs silently with no console window. A tray icon appears in the notification area — right-click it and choose **Quit RustCursor** to exit. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
+
+## Run elevated
+
+RustCursor must run with administrator privileges. Without elevation, `SetCursorPos` calls are silently blocked by Windows UIPI when the target lies over a higher-integrity window (Task Manager, UAC dialogs, some installers), which freezes screen-crossing while those windows have focus. Right-click the exe → **Run as administrator** for ad-hoc runs.
+
+## Auto-start at login
+
+Register a Task Scheduler entry that runs the exe with highest privileges at logon — no UAC prompt at startup. From an elevated PowerShell:
+
+```
+schtasks /Create /TN "RustCursor" /SC ONLOGON /RL HIGHEST /TR "<absolute path to RustCursor.exe>" /F
+```
+
+Smoke-test without rebooting: `schtasks /Run /TN "RustCursor"`. Remove with `schtasks /Delete /TN "RustCursor" /F`.
 
 ## Module layout
 
 ```
+build.rs                    copies interception.dll next to the built exe
+assets/                     bundled tray icon (PNG embedded via include_bytes!)
 src/
-  main.rs                   entry point — wires platform + config
+  main.rs                   entry — DPI setup → monitors → event loop → tray
   lib.rs                    exports core and remapper
   remapper.rs               platform-agnostic crossing logic and tests
   core/
@@ -56,9 +72,10 @@ src/
     windows/
       monitors.rs           monitor enumeration, DPI setup, build_monitor_map
       event_loop.rs         Interception event loop
+      tray.rs               system-tray icon and Win32 message pump
 ```
 
-Adding Linux support requires only a new `platform/linux/` implementation of the same public surface (`setup_dpi_awareness`, `build_monitor_map`, `run_event_loop`, `spawn_exit_on_escape`). The remapper and core are unchanged.
+Adding Linux support requires only a new `platform/linux/` implementation of the same public surface (`setup_dpi_awareness`, `build_monitor_map`, `run_event_loop`). The remapper and core are unchanged.
 
 ## Known limitations / TODO
 
@@ -67,4 +84,3 @@ Adding Linux support requires only a new `platform/linux/` implementation of the
 - [ ] Monitor layout changes (plugging/unplugging, repositioning in display settings) require a restart.
 - [ ] Windows display scaling (e.g. 150%) is expected to work with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` but has not been explicitly tested.
 - [ ] Fullscreen and fullscreen-windowed games/apps are untested — verify Interception does not interfere with raw input or exclusive mode.
-- [ ] Auto-start on login (Task Scheduler or `HKCU\Run`) for a fully hands-off setup.

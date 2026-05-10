@@ -20,7 +20,8 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Runtime artifacts
+# Runtime artifacts (cursor_log.txt normally lands in %LOCALAPPDATA%\RustCursor\;
+# this catches the CWD fallback path)
 cursor_log.txt
 
 # Vendored Interception runtime DLL — ships with the driver release, not redistributed here
