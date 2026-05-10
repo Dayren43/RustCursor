@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 
 use interception::{Filter, Interception, MouseFlags, MouseState, Stroke, is_mouse};
 
@@ -18,17 +19,26 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
 
     ic.set_filter(is_mouse, Filter::MouseFilter(MouseState::MOVE));
 
+    // Log under %LOCALAPPDATA%\RustCursor\ so the path is stable regardless of CWD —
+    // Task Scheduler launches with CWD=System32 by default, where a relative path lands.
+    let log_dir = std::env::var_os("LOCALAPPDATA")
+        .map(|s| PathBuf::from(s).join("RustCursor"))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("cursor_log.txt");
+
     let mut log = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
-        .open("cursor_log.txt")
+        .open(&log_path)
         .expect("Could not open cursor_log.txt");
 
     writeln!(log, "=== session start ===").ok();
     writeln!(log, "--- monitor layout ---").ok();
     for m in monitors.values() {
-        let line = format!(
+        writeln!(
+            log,
             "  {} : x=[{}, {}]  y=[{}, {}]  ({}x{})  {:.0}dpi",
             m.identifier,
             m.bounds.x as i32,
@@ -38,9 +48,8 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
             m.resolution.0,
             m.resolution.1,
             m.dpi,
-        );
-        println!("{}", line);
-        writeln!(log, "{}", line).ok();
+        )
+        .ok();
     }
     writeln!(log, "----------------------").ok();
 
@@ -50,7 +59,6 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
             let _ = GetCursorPos(&mut pt);
             (pt.x, pt.y)
         };
-        println!("Interception active — starting position ({}, {})", sx, sy);
         writeln!(log, "start ({}, {})", sx, sy).ok();
     }
 
@@ -89,7 +97,6 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
                         let dst = monitor_at_pixel(cx, cy, &monitors).map(|m| &m.identifier);
                         if src != dst { "REMAP" } else { "BLOCK" }
                     };
-                    println!("{}  ({},{}) → ({},{})  [raw ({},{})]", tag, old_x, old_y, cx, cy, new_x, new_y);
                     writeln!(log, "{}  ({},{}) → ({},{})  [raw ({},{})]", tag, old_x, old_y, cx, cy, new_x, new_y).ok();
 
                     *x = 0;

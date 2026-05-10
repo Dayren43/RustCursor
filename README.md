@@ -33,7 +33,12 @@ cargo build --release
 .\target\release\RustCursor.exe
 ```
 
-Press **ESC** to exit.
+The `interception.dll` runtime library is not redistributed by the `interception-sys` crate or installed by the driver — it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe on every build. Provide it in one of two ways:
+
+- Drop a copy at `vendor/interception.dll` in the repo root (gitignored), or
+- Set the `INTERCEPTION_DLL` environment variable to the absolute path of `interception.dll`.
+
+The app runs silently with no console window. A two-tone tray icon appears in the notification area — right-click it and choose **Quit RustCursor** to exit. Per-stroke diagnostics are written to `cursor_log.txt` in the working directory.
 
 ## Module layout
 
@@ -60,7 +65,6 @@ Adding Linux support requires only a new `platform/linux/` implementation of the
 - [ ] Physical monitor size is hardcoded at **27"** for all monitors — should be read from EDID or a config file.
 - [ ] Rust 2024 edition warnings in `monitor_enum_proc` — raw pointer dereference and `GetMonitorInfoW` need explicit `unsafe {}` blocks.
 - [ ] Monitor layout changes (plugging/unplugging, repositioning in display settings) require a restart.
-- [ ] ESC kill-switch polls every 50 ms on a background thread — `RegisterHotKey` or a system-tray icon would be cleaner.
 - [ ] Windows display scaling (e.g. 150%) is expected to work with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` but has not been explicitly tested.
 - [ ] Fullscreen and fullscreen-windowed games/apps are untested — verify Interception does not interfere with raw input or exclusive mode.
-- [ ] Package for everyday use: auto-start on login (Task Scheduler or `HKCU\Run`), no console window (Windows subsystem or `FreeConsole`), system-tray icon for status and exit.
+- [ ] Auto-start on login (Task Scheduler or `HKCU\Run`) for a fully hands-off setup.

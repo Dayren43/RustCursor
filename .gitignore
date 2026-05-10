@@ -23,5 +23,8 @@ target
 # Runtime artifacts
 cursor_log.txt
 
+# Vendored Interception runtime DLL — ships with the driver release, not redistributed here
+vendor/
+
 # Claude Code session state
 .claude/

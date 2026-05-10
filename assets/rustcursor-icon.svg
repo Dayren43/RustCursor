@@ -1,0 +1,11 @@
+<svg width="256" height="256" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges">
+  
+  <rect x="2" y="11" width="11" height="10" fill="#CE552B"></rect>
+  
+  <rect x="15" y="5" width="15" height="16" fill="#CE552B"></rect>
+  
+  <rect x="2" y="13" width="11" height="1" fill="#FFFFFF" fill-opacity="0.5"></rect>
+  <rect x="15" y="13" width="15" height="1" fill="#FFFFFF" fill-opacity="0.5"></rect>
+  
+  <polygon points="10,13 10,21 12,20 13,22 14,22 13,19 15,19" fill="#FFFFFF"></polygon>
+</svg>

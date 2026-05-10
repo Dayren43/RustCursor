@@ -9,6 +9,8 @@ path = "src/main.rs"
 
 [dependencies]
 interception = "0.1.2"
+tray-icon = "0.24"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dependencies.windows]
 version = ">=0.59, <=0.62"
@@ -16,6 +18,5 @@ features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
 ]
