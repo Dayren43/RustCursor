@@ -40,7 +40,10 @@ fn main() {
     // OUT_DIR = <target>/<profile>/build/<crate>-<hash>/out — walk up 3 levels to <target>/<profile>.
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let Some(profile_dir) = out_dir.ancestors().nth(3) else {
-        println!("cargo:warning=could not derive profile dir from OUT_DIR={}", out_dir.display());
+        println!(
+            "cargo:warning=could not derive profile dir from OUT_DIR={}",
+            out_dir.display()
+        );
         return;
     };
 

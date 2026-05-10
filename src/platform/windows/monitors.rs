@@ -10,7 +10,7 @@ use windows::{
     core::BOOL,
 };
 
-use rust_cursor::core::{geometry::Rect, Monitor};
+use rust_cursor::core::{Monitor, geometry::Rect};
 
 struct MonitorInfo {
     name: String,
@@ -43,7 +43,10 @@ unsafe extern "system" fn monitor_enum_proc(
             .to_string_lossy()
             .into_owned();
 
-        monitors.push(MonitorInfo { name, rect: mi_ex.monitorInfo.rcMonitor });
+        monitors.push(MonitorInfo {
+            name,
+            rect: mi_ex.monitorInfo.rcMonitor,
+        });
         true.into()
     }
 }

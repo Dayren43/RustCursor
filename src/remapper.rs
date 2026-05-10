@@ -1,13 +1,9 @@
 use std::collections::HashMap;
 
-use crate::core::{cursor_mapper, geometry::Point, Monitor};
+use crate::core::{Monitor, cursor_mapper, geometry::Point};
 
 /// Returns the monitor whose pixel rect contains (x, y), or None.
-pub fn monitor_at_pixel<'a>(
-    x: i32,
-    y: i32,
-    monitors: &'a HashMap<String, Monitor>,
-) -> Option<&'a Monitor> {
+pub fn monitor_at_pixel(x: i32, y: i32, monitors: &HashMap<String, Monitor>) -> Option<&Monitor> {
     monitors.values().find(|m| {
         x >= m.bounds.x as i32
             && x < (m.bounds.x + m.bounds.w) as i32
@@ -19,10 +15,10 @@ pub fn monitor_at_pixel<'a>(
 /// Find a monitor whose X-span includes `x`, regardless of Y.
 /// Used for gap-zone crossings where the raw destination y is outside the
 /// target monitor's OS y-range due to different per-monitor y-offsets.
-pub fn monitor_for_x<'a>(x: i32, monitors: &'a HashMap<String, Monitor>) -> Option<&'a Monitor> {
-    monitors.values().find(|m| {
-        x >= m.bounds.x as i32 && x < (m.bounds.x + m.bounds.w) as i32
-    })
+pub fn monitor_for_x(x: i32, monitors: &HashMap<String, Monitor>) -> Option<&Monitor> {
+    monitors
+        .values()
+        .find(|m| x >= m.bounds.x as i32 && x < (m.bounds.x + m.bounds.w) as i32)
 }
 
 /// Compute the corrected cursor position when crossing a monitor boundary.
@@ -45,17 +41,25 @@ pub fn remap_transition(
             // If new_x falls in a *different* monitor's x-span, this is a gap-zone
             // crossing (the monitors have different OS y-offsets). Use physical-space
             // y to find the correct landing row instead of clamping the raw pixel.
-            if let Some(dest_mon) = monitor_for_x(new_x, monitors)
-                .filter(|m| m.identifier != old_mon.identifier)
+            if let Some(dest_mon) =
+                monitor_for_x(new_x, monitors).filter(|m| m.identifier != old_mon.identifier)
             {
                 let old_physical_y = cursor_mapper::to_physical(
-                    Point { x: old_x as f32, y: old_y as f32 },
+                    Point {
+                        x: old_x as f32,
+                        y: old_y as f32,
+                    },
                     old_mon,
-                ).y;
+                )
+                .y;
                 let target_os_y = cursor_mapper::to_os_pos(
-                    Point { x: 0.0, y: old_physical_y },
+                    Point {
+                        x: 0.0,
+                        y: old_physical_y,
+                    },
                     dest_mon,
-                ).y;
+                )
+                .y;
                 let tx = new_x.clamp(
                     dest_mon.bounds.x as i32,
                     (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
@@ -98,19 +102,31 @@ pub fn remap_transition(
             let horizontal_crossing = (new_cx - old_cx).abs() >= (new_cy - old_cy).abs();
 
             let old_physical = cursor_mapper::to_physical(
-                Point { x: old_x as f32, y: old_y as f32 },
+                Point {
+                    x: old_x as f32,
+                    y: old_y as f32,
+                },
                 old_mon,
             );
             let new_physical = cursor_mapper::to_physical(
-                Point { x: new_x as f32, y: new_y as f32 },
+                Point {
+                    x: new_x as f32,
+                    y: new_y as f32,
+                },
                 new_mon,
             );
 
             // Preserve physical height for horizontal crossings, physical x for vertical.
             let target_physical = if horizontal_crossing {
-                Point { x: new_physical.x, y: old_physical.y }
+                Point {
+                    x: new_physical.x,
+                    y: old_physical.y,
+                }
             } else {
-                Point { x: old_physical.x, y: new_physical.y }
+                Point {
+                    x: old_physical.x,
+                    y: new_physical.y,
+                }
             };
 
             let target_os = cursor_mapper::to_os_pos(target_physical, new_mon);
@@ -152,8 +168,14 @@ mod tests {
     #[test]
     fn horizontal_crossing_preserves_y() {
         let mut monitors = HashMap::new();
-        monitors.insert("A".into(), make_monitor("A", 0.0, 0.0, 1920.0, 1080.0, 81.59));
-        monitors.insert("B".into(), make_monitor("B", 1920.0, 0.0, 1920.0, 1080.0, 81.59));
+        monitors.insert(
+            "A".into(),
+            make_monitor("A", 0.0, 0.0, 1920.0, 1080.0, 81.59),
+        );
+        monitors.insert(
+            "B".into(),
+            make_monitor("B", 1920.0, 0.0, 1920.0, 1080.0, 81.59),
+        );
 
         let result = remap_transition(1919, 540, 1920, 540, &monitors);
         if let Some((_cx, cy)) = result {
@@ -164,10 +186,16 @@ mod tests {
     #[test]
     fn no_correction_on_same_monitor() {
         let mut monitors = HashMap::new();
-        monitors.insert("A".into(), make_monitor("A", 0.0, 0.0, 1920.0, 1080.0, 81.59));
+        monitors.insert(
+            "A".into(),
+            make_monitor("A", 0.0, 0.0, 1920.0, 1080.0, 81.59),
+        );
 
         let result = remap_transition(100, 100, 200, 200, &monitors);
-        assert!(result.is_none(), "No correction expected within same monitor");
+        assert!(
+            result.is_none(),
+            "No correction expected within same monitor"
+        );
     }
 
     #[test]
@@ -186,8 +214,15 @@ mod tests {
         // Cursor at top of 1440p (y=5), moving left into 1080p gap zone (y=5 < 165).
         // Physical mapping should land ~y=170 on the 1080p, not snapped to y=165.
         let result = remap_transition(0, 5, -1, 5, &monitors);
-        assert!(result.is_some(), "Gap zone crossing should produce a correction");
+        assert!(
+            result.is_some(),
+            "Gap zone crossing should produce a correction"
+        );
         let (_, ty) = result.unwrap();
-        assert!(ty > 165, "Gap zone crossing should map above 1080p floor, got y={}", ty);
+        assert!(
+            ty > 165,
+            "Gap zone crossing should map above 1080p floor, got y={}",
+            ty
+        );
     }
 }

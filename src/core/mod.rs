@@ -1,12 +1,3 @@
-// Monitor and cursor mapping utilities.
-// Fixed mapping bugs and made mapping functions robust to edge cases:
-// - Prevent division by zero when monitor bounds width/height are zero.
-// - Allow points outside monitor bounds (relative coords can be <0 or >1).
-// - Use a stable pretty_monitor_name implementation that strips the common "\\.\\"
-//   prefix correctly.
-// - Added helper clamp option (currently not clamping, but left as note).
-// - Use consistent numeric types and avoid accidental integer math.
-
 pub mod geometry;
 
 use crate::core::geometry::Rect;
@@ -23,43 +14,18 @@ pub struct Monitor {
 
 impl Monitor {
     /// Compute width and height in millimeters from diagonal size and aspect ratio.
-    /// aspect_ratio is width/height.
+    /// `aspect_ratio` is width/height.
     pub fn physical_size_mm(&self) -> (f32, f32) {
         let diag_mm = self.physical_size_in * 25.4_f32;
         let aspect = self.aspect_ratio;
-        // guard against degenerate aspect ratio
-        let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { 16.0 / 9.0 };
+        let aspect = if aspect.is_finite() && aspect > 0.0 {
+            aspect
+        } else {
+            16.0 / 9.0
+        };
         let height_mm = diag_mm / ((aspect * aspect + 1.0).sqrt());
         let width_mm = height_mm * aspect;
         (width_mm, height_mm)
-    }
-
-    pub fn default() -> Self {
-        Self {
-            identifier: "Default".into(),
-            bounds: Rect { x: 0.0, y: 0.0, w: 1920.0, h: 1080.0 },
-            aspect_ratio: 16.0 / 9.0,
-            resolution: (1920, 1080),
-            dpi: 96.0,
-            physical_size_in: 27.0,
-        }
-    }
-
-    pub fn pretty_resolution(&self) -> String {
-        format!("{}x{}", self.resolution.0, self.resolution.1)
-    }
-
-    /// Returns a nicer monitor name by stripping the common Windows device prefix
-    /// "\\.\\" (which in a Rust string literal is "\\\\\\\\.\\\\").
-    /// If the identifier doesn't start with that prefix the original identifier is returned.
-    pub fn pretty_monitor_name(&self) -> String {
-        // Windows device names often start with "\\.\DISPLAYx" or similar.
-        let prefix = r"\\.\";
-        if let Some(stripped) = self.identifier.strip_prefix(prefix) {
-            stripped.to_string()
-        } else {
-            self.identifier.clone()
-        }
     }
 }
 
@@ -70,14 +36,13 @@ impl PartialEq for Monitor {
 }
 
 pub mod cursor_mapper {
-    use crate::core::geometry::Point;
     use crate::core::Monitor;
+    use crate::core::geometry::Point;
 
     /// Map a cursor point in global (OS) coordinates to physical space (mm) using a given monitor.
     /// Returns physical coordinates in millimeters relative to the top-left corner of the monitor.
     /// If monitor bounds width/height are zero, returns (0,0).
     pub fn to_physical(point: Point, source: &Monitor) -> Point {
-        // Avoid division by zero
         let w = if source.bounds.w.abs() < f32::EPSILON {
             0.0_f32
         } else {
@@ -93,7 +58,6 @@ pub mod cursor_mapper {
             return Point { x: 0.0, y: 0.0 };
         }
 
-        // relative coordinates (can be outside 0.0..1.0 if point sits outside monitor)
         let x_rel = (point.x - source.bounds.x) / w;
         let y_rel = (point.y - source.bounds.y) / h;
 
@@ -106,7 +70,7 @@ pub mod cursor_mapper {
     }
 
     /// Map a physical-space point (mm) back to OS coordinates on a target monitor.
-    /// physical is in millimeters relative to the top-left corner of the monitor.
+    /// `physical` is in millimeters relative to the top-left corner of the monitor.
     /// If target physical width/height are zero, returns the monitor top-left.
     pub fn to_os_pos(physical: Point, target: &Monitor) -> Point {
         let (width_mm, height_mm) = target.physical_size_mm();
@@ -137,9 +101,13 @@ mod tests {
         Monitor {
             identifier: format!("Test {}x{}", w as u32, h as u32),
             bounds: Rect { x, y, w, h },
-            aspect_ratio: if h.abs() < f32::EPSILON { 16.0 / 9.0 } else { w / h },
+            aspect_ratio: if h.abs() < f32::EPSILON {
+                16.0 / 9.0
+            } else {
+                w / h
+            },
             resolution: (w as u32, h as u32),
-            dpi: (((w as f64).powi(2) + (h as f64).powi(2)).sqrt()) as f64 / physical_in as f64,
+            dpi: ((w as f64).powi(2) + (h as f64).powi(2)).sqrt() / physical_in as f64,
             physical_size_in: physical_in,
         }
     }
@@ -160,7 +128,10 @@ mod tests {
         let monitor = make_test_monitor(0.0, 0.0, 1920.0, 1080.0, 27.0);
         let physical_center = {
             let (w_mm, h_mm) = monitor.physical_size_mm();
-            Point { x: w_mm / 2.0, y: h_mm / 2.0 }
+            Point {
+                x: w_mm / 2.0,
+                y: h_mm / 2.0,
+            }
         };
         let screen_point = to_os_pos(physical_center, &monitor);
 
@@ -171,7 +142,10 @@ mod tests {
     #[test]
     fn test_round_trip() {
         let monitor = make_test_monitor(100.0, 50.0, 1920.0, 1080.0, 27.0);
-        let point = Point { x: 1000.0, y: 600.0 };
+        let point = Point {
+            x: 1000.0,
+            y: 600.0,
+        };
         let physical = to_physical(point.clone(), &monitor);
         let screen_point = to_os_pos(physical, &monitor);
 
@@ -182,7 +156,10 @@ mod tests {
     #[test]
     fn test_negative_offset_monitor() {
         let monitor = make_test_monitor(-1920.0, 0.0, 1920.0, 1080.0, 27.0);
-        let point = Point { x: -960.0, y: 540.0 }; // center of this monitor
+        let point = Point {
+            x: -960.0,
+            y: 540.0,
+        };
         let physical = to_physical(point.clone(), &monitor);
         let screen_point = to_os_pos(physical, &monitor);
 
@@ -195,7 +172,7 @@ mod tests {
         let source = make_test_monitor(0.0, 0.0, 1920.0, 1080.0, 27.0);
         let target = make_test_monitor(1920.0, 0.0, 2560.0, 1440.0, 27.0);
 
-        let point = Point { x: 960.0, y: 540.0 }; // center of source
+        let point = Point { x: 960.0, y: 540.0 };
         let physical = to_physical(point, &source);
         let mapped = to_os_pos(physical, &target);
 

@@ -66,11 +66,11 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
         let device = ic.wait();
 
         let mut stroke = Stroke::Mouse {
-            state:       MouseState::empty(),
-            flags:       MouseFlags::empty(),
-            rolling:     0,
-            x:           0,
-            y:           0,
+            state: MouseState::empty(),
+            flags: MouseFlags::empty(),
+            rolling: 0,
+            x: 0,
+            y: 0,
             information: 0,
         };
         let received = ic.receive(device, std::slice::from_mut(&mut stroke));
@@ -86,24 +86,34 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
             (pt.x, pt.y)
         };
 
-        if let Stroke::Mouse { ref flags, ref mut x, ref mut y, .. } = stroke {
-            if !flags.contains(MouseFlags::MOVE_ABSOLUTE) {
-                let new_x = old_x + *x;
-                let new_y = old_y + *y;
+        if let Stroke::Mouse {
+            ref flags,
+            ref mut x,
+            ref mut y,
+            ..
+        } = stroke
+            && !flags.contains(MouseFlags::MOVE_ABSOLUTE)
+        {
+            let new_x = old_x + *x;
+            let new_y = old_y + *y;
 
-                if let Some((cx, cy)) = remap_transition(old_x, old_y, new_x, new_y, &monitors) {
-                    let tag = {
-                        let src = monitor_at_pixel(old_x, old_y, &monitors).map(|m| &m.identifier);
-                        let dst = monitor_at_pixel(cx, cy, &monitors).map(|m| &m.identifier);
-                        if src != dst { "REMAP" } else { "BLOCK" }
-                    };
-                    writeln!(log, "{}  ({},{}) → ({},{})  [raw ({},{})]", tag, old_x, old_y, cx, cy, new_x, new_y).ok();
+            if let Some((cx, cy)) = remap_transition(old_x, old_y, new_x, new_y, &monitors) {
+                let tag = {
+                    let src = monitor_at_pixel(old_x, old_y, &monitors).map(|m| &m.identifier);
+                    let dst = monitor_at_pixel(cx, cy, &monitors).map(|m| &m.identifier);
+                    if src != dst { "REMAP" } else { "BLOCK" }
+                };
+                writeln!(
+                    log,
+                    "{}  ({},{}) → ({},{})  [raw ({},{})]",
+                    tag, old_x, old_y, cx, cy, new_x, new_y
+                )
+                .ok();
 
-                    *x = 0;
-                    *y = 0;
-                    unsafe {
-                        let _ = SetCursorPos(cx, cy);
-                    }
+                *x = 0;
+                *y = 0;
+                unsafe {
+                    let _ = SetCursorPos(cx, cy);
                 }
             }
         }

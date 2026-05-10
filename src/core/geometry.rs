@@ -14,7 +14,6 @@ pub struct Rect {
     pub h: f32,
 }
 
-
 impl Rect {
     pub fn contains(&self, point: &Point) -> bool {
         point.x >= self.x
@@ -26,12 +25,18 @@ impl Rect {
 
 impl From<POINT> for Point {
     fn from(p: POINT) -> Self {
-        Point { x: p.x as f32, y: p.y as f32 }
+        Point {
+            x: p.x as f32,
+            y: p.y as f32,
+        }
     }
 }
 
 impl From<Point> for POINT {
     fn from(p: Point) -> Self {
-        POINT { x: p.x as i32, y: p.y as i32 }
+        POINT {
+            x: p.x as i32,
+            y: p.y as i32,
+        }
     }
 }
