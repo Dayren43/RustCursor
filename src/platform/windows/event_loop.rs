@@ -13,7 +13,10 @@ use windows::Win32::{
 use rust_cursor::core::Monitor;
 use rust_cursor::remapper::{monitor_at_pixel, remap_transition};
 
-pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
+use super::focus::FocusGuard;
+
+pub fn run_event_loop(monitors: HashMap<String, Monitor>, bypass_processes: Vec<String>) {
+    let mut focus = FocusGuard::new(bypass_processes);
     let ic = Interception::new()
         .expect("Failed to create Interception context — is the driver installed?");
 
@@ -93,6 +96,7 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
             ..
         } = stroke
             && !flags.contains(MouseFlags::MOVE_ABSOLUTE)
+            && !focus.should_skip_remap()
         {
             let new_x = old_x + *x;
             let new_y = old_y + *y;
@@ -103,10 +107,11 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>) {
                     let dst = monitor_at_pixel(cx, cy, &monitors).map(|m| &m.identifier);
                     if src != dst { "REMAP" } else { "BLOCK" }
                 };
+                let process = focus.current_basename().unwrap_or("?");
                 writeln!(
                     log,
-                    "{}  ({},{}) → ({},{})  [raw ({},{})]",
-                    tag, old_x, old_y, cx, cy, new_x, new_y
+                    "{}  ({},{}) → ({},{})  [raw ({},{})]  [{}]",
+                    tag, old_x, old_y, cx, cy, new_x, new_y, process
                 )
                 .ok();
 

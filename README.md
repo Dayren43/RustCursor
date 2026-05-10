@@ -40,6 +40,12 @@ The `interception.dll` runtime library is not redistributed by the `interception
 
 The app runs silently with no console window. A tray icon appears in the notification area — right-click it and choose **Quit RustCursor** to exit. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
 
+## Pausing for fullscreen apps
+
+While focused on a fullscreen DirectX/Vulkan/OpenGL app, RustCursor automatically forwards strokes unchanged so games can keep cursor capture. Detection uses Windows' own `SHQueryUserNotificationState`, the same signal used to suppress toast notifications during gameplay — so F11 browsers, fullscreen video, and PowerPoint slideshows are *not* paused.
+
+For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list in `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run). Restart RustCursor to pick up changes.
+
 ## Run elevated
 
 RustCursor must run with administrator privileges. Without elevation, `SetCursorPos` calls are silently blocked by Windows UIPI when the target lies over a higher-integrity window (Task Manager, UAC dialogs, some installers), which freezes screen-crossing while those windows have focus. Right-click the exe → **Run as administrator** for ad-hoc runs.
@@ -61,7 +67,8 @@ build.rs                    copies interception.dll next to the built exe
 assets/                     bundled tray icon (PNG embedded via include_bytes!)
 src/
   main.rs                   entry — DPI setup → monitors → event loop → tray
-  lib.rs                    exports core and remapper
+  lib.rs                    exports config, core, and remapper
+  config.rs                 user-editable TOML config (bypass list)
   remapper.rs               platform-agnostic crossing logic and tests
   core/
     mod.rs                  Monitor struct and physical↔pixel mapping
@@ -72,6 +79,7 @@ src/
     windows/
       monitors.rs           monitor enumeration, DPI setup, build_monitor_map
       event_loop.rs         Interception event loop
+      focus.rs              fullscreen-game and process-bypass detection
       tray.rs               system-tray icon and Win32 message pump
 ```
 
@@ -83,4 +91,3 @@ Adding Linux support requires only a new `platform/linux/` implementation of the
 - [ ] Rust 2024 edition warnings in `monitor_enum_proc` — raw pointer dereference and `GetMonitorInfoW` need explicit `unsafe {}` blocks.
 - [ ] Monitor layout changes (plugging/unplugging, repositioning in display settings) require a restart.
 - [ ] Windows display scaling (e.g. 150%) is expected to work with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` but has not been explicitly tested.
-- [ ] Fullscreen and fullscreen-windowed games/apps are untested — verify Interception does not interfere with raw input or exclusive mode.

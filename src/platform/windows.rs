@@ -2,6 +2,7 @@
 //! Windows runtime; `main.rs` calls only the items re-exported here.
 
 mod event_loop;
+mod focus;
 mod monitors;
 mod tray;
 

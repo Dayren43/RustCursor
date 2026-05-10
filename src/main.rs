@@ -23,9 +23,10 @@ mod platform;
 fn main() {
     platform::windows::setup_dpi_awareness();
     let monitors = platform::windows::build_monitor_map();
+    let config = rust_cursor::config::Config::load();
 
     std::thread::spawn(move || {
-        platform::windows::run_event_loop(monitors);
+        platform::windows::run_event_loop(monitors, config.bypass_processes);
     });
 
     platform::windows::run_tray_loop();

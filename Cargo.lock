@@ -920,6 +920,8 @@ version = "0.1.0"
 dependencies = [
  "image",
  "interception",
+ "serde",
+ "toml",
  "tray-icon",
  "windows",
 ]
