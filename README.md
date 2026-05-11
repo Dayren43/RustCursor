@@ -87,7 +87,9 @@ src/
     windows/
       monitors.rs           monitor enumeration, DPI setup, build_monitor_map
       event_loop.rs         Interception event loop
+      lowlevel.rs           WH_MOUSE_LL userspace backend
       focus.rs              fullscreen-game and process-bypass detection
+      layout.rs             hot-reload watcher for display changes
       tray.rs               system-tray icon and Win32 message pump
 ```
 
@@ -96,6 +98,3 @@ Adding Linux support requires only a new `platform/linux/` implementation of the
 ## Known limitations / TODO
 
 - [ ] Physical monitor size is hardcoded at **27"** for all monitors — should be read from EDID or a config file.
-- [ ] Rust 2024 edition warnings in `monitor_enum_proc` — raw pointer dereference and `GetMonitorInfoW` need explicit `unsafe {}` blocks.
-- [ ] Monitor layout changes (plugging/unplugging, repositioning in display settings) require a restart.
-- [ ] Windows display scaling (e.g. 150%) is expected to work with `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` but has not been explicitly tested.

@@ -20,19 +20,26 @@
 
 mod platform;
 
+use std::sync::{Arc, RwLock};
+
 fn main() {
     platform::windows::setup_dpi_awareness();
-    let monitors = platform::windows::build_monitor_map();
+    let monitors = Arc::new(RwLock::new(platform::windows::build_monitor_map()));
     let config = rust_cursor::config::Config::load();
+
+    // Hot-reload monitor layout on display changes (plug/unplug, rearrange).
+    // Must be registered on the main thread before run_tray_loop's message pump.
+    platform::windows::register_display_listener(monitors.clone());
 
     let bypass = config.bypass_processes;
     let backend = config.backend;
+    let backend_monitors = monitors.clone();
     std::thread::spawn(move || match backend {
         rust_cursor::config::Backend::Interception => {
-            platform::windows::run_event_loop(monitors, bypass);
+            platform::windows::run_event_loop(backend_monitors, bypass);
         }
         rust_cursor::config::Backend::Lowlevel => {
-            platform::windows::run_lowlevel_loop(monitors, bypass);
+            platform::windows::run_lowlevel_loop(backend_monitors, bypass);
         }
     });
 

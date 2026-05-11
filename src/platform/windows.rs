@@ -3,11 +3,13 @@
 
 mod event_loop;
 mod focus;
+mod layout;
 mod lowlevel;
 mod monitors;
 mod tray;
 
 pub use event_loop::run_event_loop;
+pub use layout::register_display_listener;
 pub use lowlevel::run_lowlevel_loop;
 pub use monitors::{build_monitor_map, setup_dpi_awareness};
 pub use tray::run_tray_loop;

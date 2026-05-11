@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -27,7 +27,7 @@ use rust_cursor::remapper::{monitor_at_pixel, remap_transition};
 use super::focus::FocusGuard;
 
 struct State {
-    monitors: HashMap<String, Monitor>,
+    monitors: Arc<RwLock<HashMap<String, Monitor>>>,
     focus: FocusGuard,
     log: std::fs::File,
     prev_pt: POINT,
@@ -35,7 +35,10 @@ struct State {
 
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 
-pub fn run_lowlevel_loop(monitors: HashMap<String, Monitor>, bypass_processes: Vec<String>) {
+pub fn run_lowlevel_loop(
+    monitors: Arc<RwLock<HashMap<String, Monitor>>>,
+    bypass_processes: Vec<String>,
+) {
     let log = open_log();
     let mut prev_pt = POINT::default();
     unsafe {
@@ -106,16 +109,20 @@ unsafe extern "system" fn ll_callback(n_code: i32, w_param: WPARAM, l_param: LPA
         return pass_through();
     }
 
-    let remap_result = remap_transition(old_pt.x, old_pt.y, new_pt.x, new_pt.y, &state.monitors);
+    let monitors_arc = state.monitors.clone();
+    let map = monitors_arc.read().unwrap();
+    let remap_result = remap_transition(old_pt.x, old_pt.y, new_pt.x, new_pt.y, &map);
     let Some((cx, cy)) = remap_result else {
+        drop(map);
         return pass_through();
     };
 
     let tag = {
-        let src = monitor_at_pixel(old_pt.x, old_pt.y, &state.monitors).map(|m| &m.identifier);
-        let dst = monitor_at_pixel(cx, cy, &state.monitors).map(|m| &m.identifier);
+        let src = monitor_at_pixel(old_pt.x, old_pt.y, &map).map(|m| &m.identifier);
+        let dst = monitor_at_pixel(cx, cy, &map).map(|m| &m.identifier);
         if src != dst { "REMAP" } else { "BLOCK" }
     };
+    drop(map);
     let process = state.focus.current_basename().unwrap_or("?").to_owned();
 
     let _ = writeln!(
@@ -140,23 +147,24 @@ fn write_session_header() {
     let mut s = mutex.lock().unwrap();
     let _ = writeln!(s.log, "=== session start (lowlevel backend) ===");
     let _ = writeln!(s.log, "--- monitor layout ---");
-    let lines: Vec<String> = s
-        .monitors
-        .values()
-        .map(|m| {
-            format!(
-                "  {} : x=[{}, {}]  y=[{}, {}]  ({}x{})  {:.0}dpi",
-                m.identifier,
-                m.bounds.x as i32,
-                (m.bounds.x + m.bounds.w) as i32,
-                m.bounds.y as i32,
-                (m.bounds.y + m.bounds.h) as i32,
-                m.resolution.0,
-                m.resolution.1,
-                m.dpi,
-            )
-        })
-        .collect();
+    let lines: Vec<String> = {
+        let map = s.monitors.read().unwrap();
+        map.values()
+            .map(|m| {
+                format!(
+                    "  {} : x=[{}, {}]  y=[{}, {}]  ({}x{})  {:.0}dpi",
+                    m.identifier,
+                    m.bounds.x as i32,
+                    (m.bounds.x + m.bounds.w) as i32,
+                    m.bounds.y as i32,
+                    (m.bounds.y + m.bounds.h) as i32,
+                    m.resolution.0,
+                    m.resolution.1,
+                    m.dpi,
+                )
+            })
+            .collect()
+    };
     for line in lines {
         let _ = writeln!(s.log, "{}", line);
     }

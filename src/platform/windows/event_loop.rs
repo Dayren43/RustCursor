@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 
 use interception::{Filter, Interception, MouseFlags, MouseState, Stroke, is_mouse};
 
@@ -15,7 +16,10 @@ use rust_cursor::remapper::{monitor_at_pixel, remap_transition};
 
 use super::focus::FocusGuard;
 
-pub fn run_event_loop(monitors: HashMap<String, Monitor>, bypass_processes: Vec<String>) {
+pub fn run_event_loop(
+    monitors: Arc<RwLock<HashMap<String, Monitor>>>,
+    bypass_processes: Vec<String>,
+) {
     let mut focus = FocusGuard::new(bypass_processes);
     let ic = Interception::new()
         .expect("Failed to create Interception context — is the driver installed?");
@@ -39,20 +43,23 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>, bypass_processes: Vec<
 
     writeln!(log, "=== session start ===").ok();
     writeln!(log, "--- monitor layout ---").ok();
-    for m in monitors.values() {
-        writeln!(
-            log,
-            "  {} : x=[{}, {}]  y=[{}, {}]  ({}x{})  {:.0}dpi",
-            m.identifier,
-            m.bounds.x as i32,
-            (m.bounds.x + m.bounds.w) as i32,
-            m.bounds.y as i32,
-            (m.bounds.y + m.bounds.h) as i32,
-            m.resolution.0,
-            m.resolution.1,
-            m.dpi,
-        )
-        .ok();
+    {
+        let map = monitors.read().unwrap();
+        for m in map.values() {
+            writeln!(
+                log,
+                "  {} : x=[{}, {}]  y=[{}, {}]  ({}x{})  {:.0}dpi",
+                m.identifier,
+                m.bounds.x as i32,
+                (m.bounds.x + m.bounds.w) as i32,
+                m.bounds.y as i32,
+                (m.bounds.y + m.bounds.h) as i32,
+                m.resolution.0,
+                m.resolution.1,
+                m.dpi,
+            )
+            .ok();
+        }
     }
     writeln!(log, "----------------------").ok();
 
@@ -101,13 +108,15 @@ pub fn run_event_loop(monitors: HashMap<String, Monitor>, bypass_processes: Vec<
             let new_x = old_x + *x;
             let new_y = old_y + *y;
 
-            if let Some((cx, cy)) = remap_transition(old_x, old_y, new_x, new_y, &monitors) {
+            let map = monitors.read().unwrap();
+            if let Some((cx, cy)) = remap_transition(old_x, old_y, new_x, new_y, &map) {
                 let tag = {
-                    let src = monitor_at_pixel(old_x, old_y, &monitors).map(|m| &m.identifier);
-                    let dst = monitor_at_pixel(cx, cy, &monitors).map(|m| &m.identifier);
+                    let src = monitor_at_pixel(old_x, old_y, &map).map(|m| &m.identifier);
+                    let dst = monitor_at_pixel(cx, cy, &map).map(|m| &m.identifier);
                     if src != dst { "REMAP" } else { "BLOCK" }
                 };
-                let process = focus.current_basename().unwrap_or("?");
+                let process = focus.current_basename().unwrap_or("?").to_owned();
+                drop(map);
                 writeln!(
                     log,
                     "{}  ({},{}) → ({},{})  [raw ({},{})]  [{}]",
