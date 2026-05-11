@@ -1,6 +1,6 @@
-//! Userspace mouse backend using `WH_MOUSE_LL`. AC-compatible alternative to
-//! the Interception kernel-driver backend, at the cost of a 1-frame snap on
-//! monitor crossings — the LBM trade-off (see `.claude/lowlevel-backend-plan.md`).
+//! Userspace mouse backend using `WH_MOUSE_LL`. Anti-cheat-compatible
+//! alternative to the Interception kernel-driver backend, at the cost of a
+//! 1-frame snap on monitor crossings.
 //!
 //! The Win32 hook callback must be a free `extern "system" fn` with no captured
 //! state, so backend state lives in a process-wide `OnceLock<Mutex<State>>`.

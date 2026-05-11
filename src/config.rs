@@ -12,7 +12,7 @@ use serde::Deserialize;
 /// - `Interception`: kernel-driver path (`oblitum/Interception`). No snap
 ///   artifact at monitor crossings, but flagged by kernel anti-cheats
 ///   (Vanguard, Javelin, EAC kernel mode). The driver must be installed.
-/// - `Lowlevel`: user-mode `WH_MOUSE_LL` hook (LBM-style). No driver needed,
+/// - `Lowlevel`: user-mode `WH_MOUSE_LL` hook. No driver needed,
 ///   AC-compatible, but a brief snap is visible on every monitor crossing.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]

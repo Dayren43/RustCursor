@@ -49,7 +49,7 @@ For windowed-fullscreen titles that aren't auto-detected, add their executable b
 
 Set `backend` in `config.toml`:
 
-- **`lowlevel`** *(default)* — user-mode `WH_MOUSE_LL` hook (LBM-style). No driver needed, compatible with kernel anti-cheats (Vanguard, Javelin, kernel-mode EAC). A brief snap is visible at each monitor crossing.
+- **`lowlevel`** *(default)* — user-mode `WH_MOUSE_LL` hook. No driver needed, compatible with kernel anti-cheats (Vanguard, Javelin, kernel-mode EAC). A brief snap is visible at each monitor crossing.
 - **`interception`** — kernel-driver path via [Interception](https://github.com/oblitum/Interception). No snap artifact, but flagged by kernel anti-cheats. Requires the Interception driver to be installed.
 
 Switching backends requires restarting RustCursor. The currently active backend is shown as the first item in the tray menu.
