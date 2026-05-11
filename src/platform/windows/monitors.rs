@@ -76,10 +76,12 @@ pub fn setup_dpi_awareness() {
 }
 
 /// Enumerate all connected monitors and build the monitor map used by the remapper.
+/// Physical sizes come from `config::size_for(device)` — per-monitor overrides
+/// from `[[monitor]]` in config.toml, falling back to `default_size_in`.
 pub fn build_monitor_map() -> HashMap<String, Monitor> {
     let mut map = HashMap::new();
     for m in enumerate_monitors() {
-        let physical_size_in: f64 = 27.0; // TODO: read from EDID or config
+        let physical_size_in: f64 = rust_cursor::config::size_for(&m.name) as f64;
         let pixels_w = (m.rect.right - m.rect.left) as u32;
         let pixels_h = (m.rect.bottom - m.rect.top) as u32;
         let aspect_ratio = pixels_w as f32 / pixels_h as f32;

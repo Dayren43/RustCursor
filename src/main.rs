@@ -24,8 +24,12 @@ use std::sync::{Arc, RwLock};
 
 fn main() {
     platform::windows::setup_dpi_awareness();
-    let monitors = Arc::new(RwLock::new(platform::windows::build_monitor_map()));
+
     let config = rust_cursor::config::Config::load();
+    // Install per-monitor physical sizes before the first build_monitor_map call.
+    rust_cursor::config::install_monitor_sizes(config.monitors.clone(), config.default_size_in);
+
+    let monitors = Arc::new(RwLock::new(platform::windows::build_monitor_map()));
 
     // Hot-reload monitor layout on display changes (plug/unplug, rearrange).
     // Must be registered on the main thread before run_tray_loop's message pump.

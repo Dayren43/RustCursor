@@ -54,6 +54,24 @@ Set `backend` in `config.toml`:
 
 Switching backends requires restarting RustCursor. The currently active backend is shown as the first item in the tray menu.
 
+## Monitor physical sizes
+
+The remap math needs each monitor's physical diagonal size to convert pixels to millimetres. A `default_size_in` (inches) applies to every monitor unless overridden:
+
+```toml
+default_size_in = 27.0
+
+[[monitor]]
+device  = '\\.\DISPLAY1'
+size_in = 27.0
+
+[[monitor]]
+device  = '\\.\DISPLAY2'
+size_in = 24.0
+```
+
+Device names are Windows' `\\.\DISPLAYx`; they're logged at session start in `cursor_log.txt`. TOML literal strings (single quotes) avoid having to double-escape the backslashes. Restart RustCursor after editing.
+
 ## Run elevated
 
 RustCursor must run with administrator privileges. Without elevation, `SetCursorPos` calls are silently blocked by Windows UIPI when the target lies over a higher-integrity window (Task Manager, UAC dialogs, some installers), which freezes screen-crossing while those windows have focus. Right-click the exe → **Run as administrator** for ad-hoc runs.
@@ -94,7 +112,3 @@ src/
 ```
 
 Adding Linux support requires only a new `platform/linux/` implementation of the same public surface (`setup_dpi_awareness`, `build_monitor_map`, `run_event_loop`). The remapper and core are unchanged.
-
-## Known limitations / TODO
-
-- [ ] Physical monitor size is hardcoded at **27"** for all monitors — should be read from EDID or a config file.
