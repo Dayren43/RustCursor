@@ -1,7 +1,7 @@
 //! Foreground-focus checks that decide whether to pause cursor remapping.
 //!
 //! Two signals drive the decision:
-//!  1. `SHQueryUserNotificationState() == QUNS_RUNNING_D3D_FULL_SCREEN` —
+//!  1. `SHQueryUserNotificationState() == QUNS_RUNNING_D3D_FULL_SCREEN`,
 //!     Windows' canonical "user is running a fullscreen DX/Vulkan/OpenGL app"
 //!     query. Catches most fullscreen games, including DXGI flip-discard
 //!     borderless-fullscreen titles. Does not catch F11 browsers, video
@@ -47,13 +47,13 @@ impl FocusGuard {
         }
     }
 
-    /// Returns `true` when the current stroke should be forwarded unchanged —
-    /// i.e. the user is in a fullscreen game or a whitelisted process is in
-    /// the foreground.
+    /// Returns `true` when the current stroke should be forwarded unchanged
+    /// (i.e. the user is in a fullscreen game or a whitelisted process is in
+    /// the foreground).
     pub fn should_skip_remap(&mut self) -> bool {
         // UAC's consent prompt runs on a separate "secure desktop" our process
         // can't reach. While it owns input, OpenInputDesktop fails for
-        // non-winlogon callers — use that as the signal to step fully aside,
+        // non-winlogon callers. Use that as the signal to step fully aside,
         // otherwise our SetCursorPos and zeroed deltas leak into the secure
         // desktop's input and the consent prompt's cursor stops moving freely.
         unsafe {

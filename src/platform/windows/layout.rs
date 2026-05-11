@@ -2,7 +2,7 @@
 //! top-level window so the broadcast (which Windows only sends to top-level
 //! windows, not message-only ones) reaches us. The window lives on the main
 //! thread and its messages flow through the tray's existing `GetMessageW`
-//! pump — no extra thread, no polling.
+//! pump, with no extra thread and no polling.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -26,7 +26,7 @@ static MONITORS: OnceLock<Arc<RwLock<HashMap<String, Monitor>>>> = OnceLock::new
 /// Win32 messages (the main thread, where `run_tray_loop` lives).
 pub fn register_display_listener(monitors: Arc<RwLock<HashMap<String, Monitor>>>) {
     if MONITORS.set(monitors).is_err() {
-        return; // already registered — only one listener per process
+        return; // already registered; only one listener per process
     }
 
     unsafe {
@@ -38,7 +38,7 @@ pub fn register_display_listener(monitors: Arc<RwLock<HashMap<String, Monitor>>>
             lpszClassName: class_name,
             ..Default::default()
         };
-        // RegisterClassW returns 0 on failure; ignore — if registration fails because
+        // RegisterClassW returns 0 on failure; ignore. If registration fails because
         // the class already exists (unlikely for our private name), CreateWindowExW
         // will still succeed using the existing class.
         let _ = RegisterClassW(&wc);

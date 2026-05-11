@@ -16,17 +16,17 @@ use rust_cursor::remapper::{monitor_at_pixel, remap_transition};
 
 use super::focus::FocusGuard;
 
-pub fn run_event_loop(
+pub fn run_interception_loop(
     monitors: Arc<RwLock<HashMap<String, Monitor>>>,
     bypass_processes: Vec<String>,
 ) {
     let mut focus = FocusGuard::new(bypass_processes);
     let ic = Interception::new()
-        .expect("Failed to create Interception context — is the driver installed?");
+        .expect("Failed to create Interception context. Is the driver installed?");
 
     ic.set_filter(is_mouse, Filter::MouseFilter(MouseState::MOVE));
 
-    // Log under %LOCALAPPDATA%\RustCursor\ so the path is stable regardless of CWD —
+    // Log under %LOCALAPPDATA%\RustCursor\ so the path is stable regardless of CWD.
     // Task Scheduler launches with CWD=System32 by default, where a relative path lands.
     let log_dir = std::env::var_os("LOCALAPPDATA")
         .map(|s| PathBuf::from(s).join("RustCursor"))

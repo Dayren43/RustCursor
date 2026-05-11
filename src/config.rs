@@ -128,13 +128,13 @@ pub fn size_for(device: &str) -> f32 {
 }
 
 const DEFAULT_CONFIG: &str = "\
-# RustCursor config — %LOCALAPPDATA%\\RustCursor\\config.toml
+# RustCursor config: %LOCALAPPDATA%\\RustCursor\\config.toml
 # Restart RustCursor after editing.
 
 # Mouse-input backend.
-#   \"lowlevel\"     — user-mode WH_MOUSE_LL hook. AC-compatible, no driver
+#   \"lowlevel\"     : user-mode WH_MOUSE_LL hook. AC-compatible, no driver
 #                    needed, brief snap visible on monitor crossings. (default)
-#   \"interception\" — kernel driver, no snap artifact, but blocked by kernel
+#   \"interception\" : kernel driver, no snap artifact, but blocked by kernel
 #                    anti-cheats (Vanguard, Javelin, kernel-mode EAC). Requires
 #                    the Interception driver to be installed.
 backend = \"lowlevel\"
@@ -143,7 +143,7 @@ backend = \"lowlevel\"
 # Use executable basenames (with .exe), case-insensitive.
 #
 # Fullscreen DirectX/Vulkan/OpenGL games are auto-detected via
-# SHQueryUserNotificationState — only list a game here if it isn't
+# SHQueryUserNotificationState; only list a game here if it isn't
 # being detected automatically (e.g. windowed-fullscreen titles).
 bypass_processes = []
 

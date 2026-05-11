@@ -1,6 +1,6 @@
 //! System-tray UI: Edit-bypass and Quit menu items plus the Win32 message pump
 //! that drives them. The tray icon's lifetime equals the duration of
-//! `run_tray_loop` — dropping the binding hides the icon, so we hold it for as
+//! `run_tray_loop`: dropping the binding hides the icon, so we hold it for as
 //! long as the pump runs.
 
 use std::os::windows::ffi::OsStrExt;
@@ -14,8 +14,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 
 /// Build the tray icon, register menu handlers, and pump messages until Quit is
-/// selected. Must run on the thread that owns the process message queue —
-/// i.e. the main thread. `backend` is shown as an inert status line so the
+/// selected. Must run on the thread that owns the process message queue
+/// (the main thread). `backend` is shown as an inert status line so the
 /// user can tell at a glance which backend is active.
 pub fn run_tray_loop(backend: rust_cursor::config::Backend) {
     let backend_label = match backend {
@@ -61,7 +61,7 @@ pub fn run_tray_loop(backend: rust_cursor::config::Backend) {
 }
 
 /// Open `config.toml` in the system's default associated editor for `.toml`
-/// files (or Notepad if no association is set). Errors are swallowed — the
+/// files (or Notepad if no association is set). Errors are swallowed; the
 /// menu click is best-effort.
 fn open_config_in_editor() {
     let Some(path) = rust_cursor::config::path() else {
@@ -81,7 +81,7 @@ fn open_config_in_editor() {
 }
 
 /// Decode the bundled PNG asset into a tray icon. The PNG is embedded at compile
-/// time so the exe is self-contained — no asset path lookup at runtime.
+/// time so the exe is self-contained; no asset path lookup at runtime.
 fn build_icon() -> Icon {
     const ICON_PNG: &[u8] = include_bytes!("../../../assets/rustcursor-icon.png");
     let img = image::load_from_memory(ICON_PNG)

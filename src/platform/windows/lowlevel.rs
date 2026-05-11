@@ -53,7 +53,7 @@ pub fn run_lowlevel_loop(
     };
 
     if STATE.set(Mutex::new(state)).is_err() {
-        // Already initialized — only allowed once per process.
+        // Already initialized; only allowed once per process.
         return;
     }
 
@@ -90,7 +90,7 @@ unsafe extern "system" fn ll_callback(n_code: i32, w_param: WPARAM, l_param: LPA
 
     let info = unsafe { &*(l_param.0 as *const MSLLHOOKSTRUCT) };
 
-    // Ignore injected events — our own `SetCursorPos` will produce one, and
+    // Ignore injected events: our own `SetCursorPos` will produce one, and
     // we'd otherwise recurse on it. Also skips other input-injecting tools.
     if info.flags & LLMHF_INJECTED != 0 {
         return pass_through();

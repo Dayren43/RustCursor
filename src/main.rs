@@ -14,7 +14,8 @@
 //!
 //! Prerequisites:
 //!   Install the Interception driver (run as administrator, then reboot):
-//!     install-interception.exe /install  — https://github.com/oblitum/Interception/releases
+//!     install-interception.exe /install
+//!   Download: https://github.com/oblitum/Interception/releases
 
 #![windows_subsystem = "windows"]
 
@@ -40,7 +41,7 @@ fn main() {
     let backend_monitors = monitors.clone();
     std::thread::spawn(move || match backend {
         rust_cursor::config::Backend::Interception => {
-            platform::windows::run_event_loop(backend_monitors, bypass);
+            platform::windows::run_interception_loop(backend_monitors, bypass);
         }
         rust_cursor::config::Backend::Lowlevel => {
             platform::windows::run_lowlevel_loop(backend_monitors, bypass);

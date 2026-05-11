@@ -64,7 +64,7 @@ fn enumerate_monitors() -> Vec<MonitorInfo> {
     monitors
 }
 
-/// Declare PER_MONITOR_AWARE_V2 so all coordinate APIs use physical pixels —
+/// Declare PER_MONITOR_AWARE_V2 so all coordinate APIs use physical pixels,
 /// consistent with the raw device counts Interception delivers.
 pub fn setup_dpi_awareness() {
     unsafe {
@@ -76,7 +76,7 @@ pub fn setup_dpi_awareness() {
 }
 
 /// Enumerate all connected monitors and build the monitor map used by the remapper.
-/// Physical sizes come from `config::size_for(device)` — per-monitor overrides
+/// Physical sizes come from `config::size_for(device)`: per-monitor overrides
 /// from `[[monitor]]` in config.toml, falling back to `default_size_in`.
 pub fn build_monitor_map() -> HashMap<String, Monitor> {
     let mut map = HashMap::new();

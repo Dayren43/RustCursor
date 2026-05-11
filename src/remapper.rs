@@ -71,7 +71,7 @@ pub fn remap_transition(
                 return Some((tx, ty));
             }
 
-            // Same monitor x-span or no monitor at all — block inside source bounds.
+            // Same monitor x-span or no monitor at all: block inside source bounds.
             let pinned_x = new_x.clamp(
                 old_mon.bounds.x as i32,
                 (old_mon.bounds.x + old_mon.bounds.w - 1.0) as i32,
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn gap_zone_crossing_uses_physical_y() {
-        // 1080p left at y-offset 165, 1440p right at y=0 — matches the real layout.
+        // 1080p left at y-offset 165, 1440p right at y=0. Matches the real layout.
         let mut monitors = HashMap::new();
         monitors.insert(
             "left".into(),

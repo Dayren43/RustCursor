@@ -2,13 +2,13 @@ use std::env;
 use std::path::PathBuf;
 
 // The interception-sys crate links against interception.lib, but the matching
-// interception.dll is not redistributed by the crate — it ships with the
+// interception.dll is not redistributed by the crate; it ships with the
 // Interception driver release. This script copies the DLL next to the built
 // executable so the binary runs without needing the DLL on PATH.
 //
 // Resolution order for the source DLL:
-//   1. `INTERCEPTION_DLL` env var — absolute path to interception.dll
-//   2. `<project_root>/vendor/interception.dll` — gitignored local copy
+//   1. `INTERCEPTION_DLL` env var: absolute path to interception.dll
+//   2. `<project_root>/vendor/interception.dll`: gitignored local copy
 // If neither is found, the build still succeeds and emits a warning; the
 // resulting exe will fail at startup until the DLL is placed next to it.
 
@@ -30,14 +30,14 @@ fn main() {
     if !dll_src.is_file() {
         println!(
             "cargo:warning=interception.dll not found (looked at INTERCEPTION_DLL and {}). \
-             Copy the DLL there or set INTERCEPTION_DLL — the exe will not start without it.",
+             Copy the DLL there or set INTERCEPTION_DLL; the exe will not start without it.",
             vendored.display()
         );
         return;
     }
     println!("cargo:rerun-if-changed={}", dll_src.display());
 
-    // OUT_DIR = <target>/<profile>/build/<crate>-<hash>/out — walk up 3 levels to <target>/<profile>.
+    // OUT_DIR is <target>/<profile>/build/<crate>-<hash>/out, so walk up 3 levels to reach <target>/<profile>.
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let Some(profile_dir) = out_dir.ancestors().nth(3) else {
         println!(
