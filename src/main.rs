@@ -25,9 +25,16 @@ fn main() {
     let monitors = platform::windows::build_monitor_map();
     let config = rust_cursor::config::Config::load();
 
-    std::thread::spawn(move || {
-        platform::windows::run_event_loop(monitors, config.bypass_processes);
+    let bypass = config.bypass_processes;
+    let backend = config.backend;
+    std::thread::spawn(move || match backend {
+        rust_cursor::config::Backend::Interception => {
+            platform::windows::run_event_loop(monitors, bypass);
+        }
+        rust_cursor::config::Backend::Lowlevel => {
+            platform::windows::run_lowlevel_loop(monitors, bypass);
+        }
     });
 
-    platform::windows::run_tray_loop();
+    platform::windows::run_tray_loop(backend);
 }

@@ -15,11 +15,20 @@ use windows::core::{PCWSTR, w};
 
 /// Build the tray icon, register menu handlers, and pump messages until Quit is
 /// selected. Must run on the thread that owns the process message queue —
-/// i.e. the main thread.
-pub fn run_tray_loop() {
+/// i.e. the main thread. `backend` is shown as an inert status line so the
+/// user can tell at a glance which backend is active.
+pub fn run_tray_loop(backend: rust_cursor::config::Backend) {
+    let backend_label = match backend {
+        rust_cursor::config::Backend::Interception => "Backend: interception",
+        rust_cursor::config::Backend::Lowlevel => "Backend: lowlevel",
+    };
     let menu = Menu::new();
+    let backend_item = MenuItem::new(backend_label, false, None);
     let edit_item = MenuItem::new("Edit bypass list…", true, None);
     let quit_item = MenuItem::new("Quit RustCursor", true, None);
+    menu.append(&backend_item).expect("append backend status");
+    menu.append(&PredefinedMenuItem::separator())
+        .expect("append separator");
     menu.append(&edit_item).expect("append edit menu item");
     menu.append(&PredefinedMenuItem::separator())
         .expect("append separator");

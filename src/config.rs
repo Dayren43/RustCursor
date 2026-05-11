@@ -5,8 +5,28 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+/// Mouse-input backend selection.
+///
+/// - `Interception`: kernel-driver path (`oblitum/Interception`). No snap
+///   artifact at monitor crossings, but flagged by kernel anti-cheats
+///   (Vanguard, Javelin, EAC kernel mode). The driver must be installed.
+/// - `LowLevel`: user-mode `WH_MOUSE_LL` hook (LBM-style). No driver needed,
+///   AC-compatible, but a brief snap is visible on every monitor crossing.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    Interception,
+    #[default]
+    #[serde(alias = "lowlevel_hook", alias = "ll")]
+    Lowlevel,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct Config {
+    /// Which mouse-input backend to use.
+    #[serde(default)]
+    pub backend: Backend,
+
     /// Foreground process basenames (e.g. "csgo2.exe") whose focus should pause
     /// cursor remapping. Case-insensitive.
     #[serde(default)]
@@ -43,6 +63,14 @@ pub fn path() -> Option<PathBuf> {
 const DEFAULT_CONFIG: &str = "\
 # RustCursor config — %LOCALAPPDATA%\\RustCursor\\config.toml
 # Restart RustCursor after editing.
+
+# Mouse-input backend.
+#   \"lowlevel\"     — user-mode WH_MOUSE_LL hook. AC-compatible, no driver
+#                    needed, brief snap visible on monitor crossings. (default)
+#   \"interception\" — kernel driver, no snap artifact, but blocked by kernel
+#                    anti-cheats (Vanguard, Javelin, kernel-mode EAC). Requires
+#                    the Interception driver to be installed.
+backend = \"lowlevel\"
 
 # Foreground processes that pause cursor remapping while focused.
 # Use executable basenames (with .exe), case-insensitive.

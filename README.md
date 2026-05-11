@@ -15,16 +15,15 @@ Windows places the cursor at the raw pixel position when crossing monitor bounda
 
 ## Prerequisites
 
-1. Install the Interception driver (run as administrator, then reboot):
-   ```
-   install-interception.exe /install
-   ```
-   Download: https://github.com/oblitum/Interception/releases
+Rust toolchain (stable, MSVC target):
+```
+rustup target add x86_64-pc-windows-msvc
+```
 
-2. Rust toolchain (stable, MSVC target):
-   ```
-   rustup target add x86_64-pc-windows-msvc
-   ```
+The default `lowlevel` backend requires no external dependencies. For the `interception` backend, additionally install the [Interception driver](https://github.com/oblitum/Interception/releases) — run as administrator, then reboot:
+```
+install-interception.exe /install
+```
 
 ## Build and run
 
@@ -33,18 +32,27 @@ cargo build --release
 .\target\release\RustCursor.exe
 ```
 
-The `interception.dll` runtime library is not redistributed by the `interception-sys` crate or installed by the driver — it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe on every build. Provide it in one of two ways:
-
-- Drop a copy at `vendor/interception.dll` in the repo root (gitignored), or
-- Set the `INTERCEPTION_DLL` environment variable to the absolute path of `interception.dll`.
-
 The app runs silently with no console window. A tray icon appears in the notification area — right-click it and choose **Quit RustCursor** to exit. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
+
+For the `interception` backend, `interception.dll` must sit next to the exe at runtime. The DLL is not redistributed by the `interception-sys` crate or installed by the driver — it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe automatically; provide it via either of:
+
+- A copy at `vendor/interception.dll` in the repo root (gitignored), or
+- The `INTERCEPTION_DLL` environment variable pointing at the absolute path.
 
 ## Pausing for fullscreen apps
 
 While focused on a fullscreen DirectX/Vulkan/OpenGL app, RustCursor automatically forwards strokes unchanged so games can keep cursor capture. Detection uses Windows' own `SHQueryUserNotificationState`, the same signal used to suppress toast notifications during gameplay — so F11 browsers, fullscreen video, and PowerPoint slideshows are *not* paused.
 
-For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list in `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run). Restart RustCursor to pick up changes.
+For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list in `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run). Restart RustCursor to pick up changes. The tray menu's **Edit bypass list…** item opens the file in the default editor.
+
+## Backends
+
+Set `backend` in `config.toml`:
+
+- **`lowlevel`** *(default)* — user-mode `WH_MOUSE_LL` hook (LBM-style). No driver needed, compatible with kernel anti-cheats (Vanguard, Javelin, kernel-mode EAC). A brief snap is visible at each monitor crossing.
+- **`interception`** — kernel-driver path via [Interception](https://github.com/oblitum/Interception). No snap artifact, but flagged by kernel anti-cheats. Requires the Interception driver to be installed.
+
+Switching backends requires restarting RustCursor. The currently active backend is shown as the first item in the tray menu.
 
 ## Run elevated
 
