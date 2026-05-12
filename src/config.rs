@@ -224,6 +224,24 @@ pub fn position_for(_device: &str, hwid: Option<&str>) -> Option<(f32, f32)> {
     sizes.by_hwid.get(h)?.position_mm
 }
 
+/// Replace the runtime size + position for a HWID without touching disk.
+/// Used by the layout canvas to push every drag frame into the active SIZES
+/// lookup so cursor crossings reflect the new layout in real time; the GUI
+/// writes the disk entry once when the drag ends.
+pub fn override_hwid(hwid: &str, size_in: f32, position_mm: (f32, f32)) {
+    let mut guard = SIZES.write().expect("SIZES poisoned");
+    let Some(sizes) = guard.as_mut() else {
+        return;
+    };
+    sizes.by_hwid.insert(
+        hwid.to_string(),
+        HwidEntry {
+            size_in,
+            position_mm: Some(position_mm),
+        },
+    );
+}
+
 const DEFAULT_CONFIG: &str = "\
 # RustCursor config: %LOCALAPPDATA%\\RustCursor\\config.toml
 # Restart RustCursor after editing.

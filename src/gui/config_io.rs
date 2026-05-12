@@ -72,11 +72,14 @@ impl ConfigDoc {
     /// `profile_hwids`. Creates the profile if no existing one has a matching
     /// HWID set (order-independent). `description` is written/refreshed on
     /// every call so the human label tracks whatever the GUI shows.
+    /// `position_mm` is optional so size-only edits don't synthesise a
+    /// position field for entries that previously had none.
     pub fn upsert_profile_monitor(
         &mut self,
         profile_hwids: &[String],
         hwid: &str,
         size_in: f32,
+        position_mm: Option<(f32, f32)>,
         description: &str,
     ) {
         if !matches!(self.doc.get("profile"), Some(Item::ArrayOfTables(_))) {
@@ -134,8 +137,11 @@ impl ConfigDoc {
                 .and_then(|it| it.as_str())
                 == Some(hwid);
             if same {
-                monitors.get_mut(i).expect("monitor index in bounds")["size_in"] =
-                    value(size_in as f64);
+                let tbl = monitors.get_mut(i).expect("monitor index in bounds");
+                tbl["size_in"] = value(size_in as f64);
+                if let Some(pos) = position_mm {
+                    tbl["position_mm"] = value(position_array(pos));
+                }
                 return;
             }
         }
@@ -143,6 +149,16 @@ impl ConfigDoc {
         let mut tbl = Table::new();
         tbl["hwid"] = value(hwid);
         tbl["size_in"] = value(size_in as f64);
+        if let Some(pos) = position_mm {
+            tbl["position_mm"] = value(position_array(pos));
+        }
         monitors.push(tbl);
     }
+}
+
+fn position_array(pos: (f32, f32)) -> Array {
+    let mut arr = Array::new();
+    arr.push(pos.0 as f64);
+    arr.push(pos.1 as f64);
+    arr
 }
