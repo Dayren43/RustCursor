@@ -3,9 +3,9 @@
 //! Sizes come from a fresh `Config::load()` rather than the running process's
 //! cached `SIZES`, so the values match what the next start-up would see. Edits
 //! auto-save on drag-end / focus-loss to keep disk writes bounded during
-//! `DragValue` interaction. A "Restart to apply" banner appears as soon as
-//! any row's saved size diverges from the snapshot taken on tab construction
-//! or last refresh.
+//! `DragValue` interaction; each successful save also calls
+//! `gui::reload_active_profile` so the running remapper picks up the new value
+//! immediately without a restart.
 //!
 //! Writes go to `[[profile.monitor]]` entries keyed by stable HWID, scoped to
 //! the profile whose `hwids` set equals the currently-connected monitor set.
@@ -26,7 +26,9 @@ struct MonitorRow {
     resolution: (u32, u32),
     x: i32,
     y: i32,
-    /// Snapshot at refresh time; the restart banner is driven by `live` differing from this.
+    /// Snapshot at last successful save (or refresh). Used so the live edit
+    /// suppression check in the save path only fires when something actually
+    /// changed.
     initial_size_in: f32,
     live_size_in: f32,
 }
@@ -110,14 +112,6 @@ impl MonitorsTab {
             });
         });
         ui.add_space(8.0);
-
-        if self.needs_restart() {
-            ui.colored_label(
-                egui::Color32::from_rgb(220, 170, 80),
-                "Restart RustCursor to apply changes.",
-            );
-            ui.add_space(8.0);
-        }
 
         if self.rows.is_empty() {
             ui.label(
@@ -208,12 +202,6 @@ impl MonitorsTab {
         }
     }
 
-    fn needs_restart(&self) -> bool {
-        self.rows
-            .iter()
-            .any(|r| (r.live_size_in - r.initial_size_in).abs() > f32::EPSILON)
-    }
-
     fn save_one(
         &mut self,
         profile_hwids: &[String],
@@ -231,7 +219,20 @@ impl MonitorsTab {
             doc.save()
         })();
         match result {
-            Ok(()) => self.last_error = None,
+            Ok(()) => {
+                self.last_error = None;
+                // Hot-swap the runtime size/position lookup and rebuild the
+                // monitor map so the new value affects crossings immediately.
+                // Also update the in-row baseline so the restart banner reflects
+                // "what the running process now uses" rather than "what was loaded
+                // when the window opened."
+                crate::gui::reload_active_profile();
+                for row in self.rows.iter_mut() {
+                    if row.device == device {
+                        row.initial_size_in = row.live_size_in;
+                    }
+                }
+            }
             Err(e) => self.last_error = Some(e),
         }
     }

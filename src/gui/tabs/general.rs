@@ -13,8 +13,10 @@ use crate::gui::autostart;
 use crate::gui::config_io::ConfigDoc;
 
 pub struct GeneralTab {
-    /// Snapshot of disk config when the window opened, used for the
-    /// "needs restart" banner comparison.
+    /// Snapshot of the backend at window open, used to flag the restart banner
+    /// (the input-loop thread is spawned once at startup and can't be swapped
+    /// live). `default_size_in` is also snapshotted for the save-and-clear
+    /// flow, but doesn't drive the banner since it hot-reloads.
     initial_backend: Backend,
     initial_default_size_in: f32,
 
@@ -53,7 +55,7 @@ impl GeneralTab {
         if self.needs_restart() {
             ui.colored_label(
                 egui::Color32::from_rgb(220, 170, 80),
-                "Restart RustCursor to apply changes.",
+                "Restart RustCursor for the backend change to take effect.",
             );
             ui.add_space(8.0);
         }
@@ -122,8 +124,9 @@ impl GeneralTab {
     }
 
     fn needs_restart(&self) -> bool {
+        // Only backend changes require a restart; size edits hot-reload via
+        // `reload_active_profile` in `save_default_size`.
         self.backend != self.initial_backend
-            || (self.default_size_in - self.initial_default_size_in).abs() > f32::EPSILON
     }
 
     fn save_backend(&mut self) {
@@ -135,8 +138,16 @@ impl GeneralTab {
 
     fn save_default_size(&mut self) {
         let inches = self.default_size_in;
-        if let Err(e) = self.write_with(|doc| doc.set_default_size_in(inches)) {
-            self.last_error = Some(e);
+        match self.write_with(|doc| doc.set_default_size_in(inches)) {
+            Ok(()) => {
+                // Default size affects any monitor without an override; hot-swap
+                // the SIZES lookup and rebuild the monitor map so the change
+                // surfaces without a restart. Reset the banner baseline so it
+                // disappears once the running process matches the saved value.
+                crate::gui::reload_active_profile();
+                self.initial_default_size_in = self.default_size_in;
+            }
+            Err(e) => self.last_error = Some(e),
         }
     }
 

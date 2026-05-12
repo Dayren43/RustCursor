@@ -5,12 +5,13 @@
 //! pump, with no extra thread and no polling.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, RegisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE,
+    CreateWindowExW, DefWindowProcW, PostMessageW, RegisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE,
     WM_DISPLAYCHANGE, WNDCLASSW,
 };
 use windows::core::{PCWSTR, w};
@@ -20,6 +21,11 @@ use rust_cursor::core::Monitor;
 use super::monitors::build_monitor_map;
 
 static MONITORS: OnceLock<Arc<RwLock<HashMap<String, Monitor>>>> = OnceLock::new();
+
+/// HWND of the listener window, published once `CreateWindowExW` succeeds.
+/// `trigger_monitor_rebuild` reads this so the GUI thread can post a
+/// `WM_DISPLAYCHANGE` to the listener after writing config.
+static LISTENER_HWND: AtomicIsize = AtomicIsize::new(0);
 
 /// Register a hidden top-level window that rebuilds the shared monitor map on
 /// every `WM_DISPLAYCHANGE`. Must be called on the thread that will pump
@@ -43,7 +49,7 @@ pub fn register_display_listener(monitors: Arc<RwLock<HashMap<String, Monitor>>>
         // will still succeed using the existing class.
         let _ = RegisterClassW(&wc);
 
-        let _ = CreateWindowExW(
+        let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class_name,
             w!("RustCursorDisplayListener"),
@@ -58,6 +64,26 @@ pub fn register_display_listener(monitors: Arc<RwLock<HashMap<String, Monitor>>>
             None,
         )
         .expect("CreateWindowExW (display listener)");
+        LISTENER_HWND.store(hwnd.0 as isize, Ordering::SeqCst);
+    }
+}
+
+/// Post a `WM_DISPLAYCHANGE` to the listener window so the monitor map gets
+/// rebuilt with the currently-installed sizes/positions. Used by the GUI's
+/// save path to surface config edits without a restart. Safe to call from
+/// any thread because `PostMessageW` is cross-thread.
+pub fn trigger_monitor_rebuild() {
+    let raw = LISTENER_HWND.load(Ordering::SeqCst);
+    if raw == 0 {
+        return;
+    }
+    unsafe {
+        let _ = PostMessageW(
+            Some(HWND(raw as *mut _)),
+            WM_DISPLAYCHANGE,
+            WPARAM(0),
+            LPARAM(0),
+        );
     }
 }
 

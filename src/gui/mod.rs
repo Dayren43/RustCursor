@@ -12,6 +12,27 @@ mod autostart;
 mod config_io;
 mod tabs;
 
+/// Re-read `config.toml`, re-resolve the active profile against the currently
+/// connected HWIDs, swap the runtime `SIZES` lookup, and ping the display
+/// listener to rebuild the monitor map. Called from the GUI's save paths so
+/// size or position edits surface without a RustCursor restart. The Backend
+/// radio and Auto-start toggle do not trigger this because they affect things
+/// (the spawned input-loop thread, Task Scheduler) that a rebuild can't reach.
+pub(crate) fn reload_active_profile() {
+    let cfg = rust_cursor::config::Config::load();
+    let hwids = crate::platform::windows::enumerate_hwids();
+    let profile_monitors = cfg
+        .active_profile(&hwids)
+        .map(|p| p.monitors.clone())
+        .unwrap_or_default();
+    rust_cursor::config::install_active_profile(
+        profile_monitors,
+        cfg.legacy_monitors.clone(),
+        cfg.default_size_in,
+    );
+    crate::platform::windows::trigger_monitor_rebuild();
+}
+
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 use windows::Win32::Foundation::HWND;

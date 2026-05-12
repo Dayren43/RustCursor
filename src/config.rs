@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use serde::Deserialize;
 
@@ -159,12 +159,12 @@ struct ActiveSizes {
     default: f32,
 }
 
-static SIZES: OnceLock<ActiveSizes> = OnceLock::new();
+static SIZES: RwLock<Option<ActiveSizes>> = RwLock::new(None);
 
-/// Install the per-monitor size and position lookup from a resolved active
-/// profile plus the legacy device-keyed list (used as a size-only fallback).
-/// Call once at startup before any `build_monitor_map` invocation. Calling
-/// more than once is a no-op.
+/// Install (or replace) the per-monitor size and position lookup from a
+/// resolved active profile plus the legacy device-keyed list (used as a
+/// size-only fallback). Called once at startup and then again from the GUI
+/// after every successful save so live edits show up without a restart.
 pub fn install_active_profile(
     profile_monitors: Vec<ProfileMonitor>,
     legacy_monitors: Vec<MonitorEntry>,
@@ -186,7 +186,7 @@ pub fn install_active_profile(
         .into_iter()
         .map(|m| (m.device, m.size_in))
         .collect();
-    let _ = SIZES.set(ActiveSizes {
+    *SIZES.write().expect("SIZES poisoned") = Some(ActiveSizes {
         by_hwid,
         by_device,
         default,
@@ -198,7 +198,8 @@ pub fn install_active_profile(
 /// fallback; finally `default_size_in` (or the hard 27.0 fallback if
 /// `install_active_profile` was never called).
 pub fn size_for(device: &str, hwid: Option<&str>) -> f32 {
-    let Some(sizes) = SIZES.get() else {
+    let guard = SIZES.read().expect("SIZES poisoned");
+    let Some(sizes) = guard.as_ref() else {
         return 27.0;
     };
     if let Some(h) = hwid {
@@ -217,7 +218,8 @@ pub fn size_for(device: &str, hwid: Option<&str>) -> f32 {
 /// active profile pins one. `None` means the caller should fall back to the
 /// runtime default (left-to-right cumulative-width seeding).
 pub fn position_for(_device: &str, hwid: Option<&str>) -> Option<(f32, f32)> {
-    let sizes = SIZES.get()?;
+    let guard = SIZES.read().expect("SIZES poisoned");
+    let sizes = guard.as_ref()?;
     let h = hwid?;
     sizes.by_hwid.get(h)?.position_mm
 }
