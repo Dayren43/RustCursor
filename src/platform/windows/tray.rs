@@ -24,11 +24,13 @@ pub fn run_tray_loop(backend: rust_cursor::config::Backend) {
     };
     let menu = Menu::new();
     let backend_item = MenuItem::new(backend_label, false, None);
+    let settings_item = MenuItem::new("Settings…", true, None);
     let edit_item = MenuItem::new("Edit bypass list…", true, None);
     let quit_item = MenuItem::new("Quit RustCursor", true, None);
     menu.append(&backend_item).expect("append backend status");
     menu.append(&PredefinedMenuItem::separator())
         .expect("append separator");
+    menu.append(&settings_item).expect("append settings item");
     menu.append(&edit_item).expect("append edit menu item");
     menu.append(&PredefinedMenuItem::separator())
         .expect("append separator");
@@ -41,11 +43,14 @@ pub fn run_tray_loop(backend: rust_cursor::config::Backend) {
         .build()
         .expect("build tray icon");
 
+    let settings_id = settings_item.id().clone();
     let edit_id = edit_item.id().clone();
     let quit_id = quit_item.id().clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         if event.id == quit_id {
             unsafe { PostQuitMessage(0) };
+        } else if event.id == settings_id {
+            crate::gui::open_settings_window();
         } else if event.id == edit_id {
             open_config_in_editor();
         }

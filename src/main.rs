@@ -19,6 +19,7 @@
 
 #![windows_subsystem = "windows"]
 
+mod gui;
 mod platform;
 
 use std::sync::{Arc, RwLock};
