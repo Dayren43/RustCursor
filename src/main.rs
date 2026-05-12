@@ -39,7 +39,7 @@ fn main() {
         .active_profile(&connected_hwids)
         .map(|p| p.monitors.clone())
         .unwrap_or_default();
-    rust_cursor::config::install_active_sizes(
+    rust_cursor::config::install_active_profile(
         profile_monitors,
         config.legacy_monitors.clone(),
         config.default_size_in,

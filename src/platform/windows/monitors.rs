@@ -13,7 +13,7 @@ use windows::{
     core::{BOOL, PCWSTR},
 };
 
-use rust_cursor::core::{Monitor, geometry::Rect};
+use rust_cursor::core::{Monitor, geometry::Point, geometry::Rect};
 
 struct MonitorInfo {
     /// Windows OS slot name, e.g. `\\.\DISPLAY1`.
@@ -141,30 +141,69 @@ pub fn enumerate_hwids() -> Vec<String> {
 /// remapper. Physical sizes come from `config::size_for(device, hwid)`: the
 /// active profile's per-HWID entry takes precedence, falling back to a
 /// legacy device-keyed `[[monitor]]` entry, then to `default_size_in`.
+///
+/// Default `position_mm` is seeded by walking monitors in OS-x order and
+/// accumulating physical widths so they touch left-to-right with y=0. This
+/// preserves today's behaviour (same physical y origin across monitors) for
+/// any setup where the user hasn't pinned positions in the Settings GUI.
+/// Profile overrides from `config::position_for` win when present.
 pub fn build_monitor_map() -> HashMap<String, Monitor> {
+    struct Tmp {
+        info: MonitorInfo,
+        size_in: f32,
+        w_mm: f32,
+    }
+
+    let mut tmps: Vec<Tmp> = enumerate_monitors()
+        .into_iter()
+        .map(|m| {
+            let size_in = rust_cursor::config::size_for(&m.name, m.hwid.as_deref());
+            let w_px = (m.rect.right - m.rect.left) as f32;
+            let h_px = (m.rect.bottom - m.rect.top) as f32;
+            let aspect = if h_px.abs() < f32::EPSILON {
+                16.0 / 9.0
+            } else {
+                w_px / h_px
+            };
+            let diag_mm = size_in * 25.4;
+            let h_mm = diag_mm / ((aspect * aspect + 1.0).sqrt());
+            let w_mm = h_mm * aspect;
+            Tmp { info: m, size_in, w_mm }
+        })
+        .collect();
+    tmps.sort_by_key(|t| t.info.rect.left);
+
+    let mut defaults: HashMap<String, (f32, f32)> = HashMap::new();
+    let mut cum_x_mm = 0.0_f32;
+    for t in &tmps {
+        defaults.insert(t.info.name.clone(), (cum_x_mm, 0.0));
+        cum_x_mm += t.w_mm;
+    }
+
     let mut map = HashMap::new();
-    for m in enumerate_monitors() {
-        let physical_size_in: f64 =
-            rust_cursor::config::size_for(&m.name, m.hwid.as_deref()) as f64;
-        let pixels_w = (m.rect.right - m.rect.left) as u32;
-        let pixels_h = (m.rect.bottom - m.rect.top) as u32;
+    for t in tmps {
+        let pos = rust_cursor::config::position_for(&t.info.name, t.info.hwid.as_deref())
+            .unwrap_or_else(|| defaults[&t.info.name]);
+        let pixels_w = (t.info.rect.right - t.info.rect.left) as u32;
+        let pixels_h = (t.info.rect.bottom - t.info.rect.top) as u32;
         let aspect_ratio = pixels_w as f32 / pixels_h as f32;
-        let dpi = ((pixels_w.pow(2) + pixels_h.pow(2)) as f64).sqrt() / physical_size_in;
+        let dpi = ((pixels_w.pow(2) + pixels_h.pow(2)) as f64).sqrt() / t.size_in as f64;
         map.insert(
-            m.name.clone(),
+            t.info.name.clone(),
             Monitor {
-                identifier: m.name.clone(),
-                hwid: m.hwid,
+                identifier: t.info.name.clone(),
+                hwid: t.info.hwid,
                 bounds: Rect {
-                    x: m.rect.left as f32,
-                    y: m.rect.top as f32,
-                    w: (m.rect.right - m.rect.left) as f32,
-                    h: (m.rect.bottom - m.rect.top) as f32,
+                    x: t.info.rect.left as f32,
+                    y: t.info.rect.top as f32,
+                    w: (t.info.rect.right - t.info.rect.left) as f32,
+                    h: (t.info.rect.bottom - t.info.rect.top) as f32,
                 },
+                position_mm: Point { x: pos.0, y: pos.1 },
                 aspect_ratio,
                 resolution: (pixels_w, pixels_h),
                 dpi,
-                physical_size_in: physical_size_in as f32,
+                physical_size_in: t.size_in,
             },
         );
     }

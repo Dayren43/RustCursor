@@ -1,6 +1,6 @@
 pub mod geometry;
 
-use crate::core::geometry::Rect;
+use crate::core::geometry::{Point, Rect};
 
 #[derive(Debug, Clone)]
 pub struct Monitor {
@@ -11,6 +11,13 @@ pub struct Monitor {
     /// by `identifier` in that case.
     pub hwid: Option<String>,
     pub bounds: Rect,
+    /// Physical top-left in shared millimetre coordinates. Seeded from the
+    /// Windows arrangement at startup (left-to-right cumulative width, y=0)
+    /// and overridden by the active `[[profile.monitor]].position_mm` if set.
+    /// Cross-monitor remapping preserves the cursor's position in this
+    /// shared space, so dragging monitors in the Settings GUI changes where
+    /// crossings land.
+    pub position_mm: Point,
     pub aspect_ratio: f32,
     pub resolution: (u32, u32),
     pub dpi: f64,
@@ -107,6 +114,7 @@ mod tests {
             identifier: format!("Test {}x{}", w as u32, h as u32),
             hwid: None,
             bounds: Rect { x, y, w, h },
+            position_mm: Point { x: 0.0, y: 0.0 },
             aspect_ratio: if h.abs() < f32::EPSILON {
                 16.0 / 9.0
             } else {

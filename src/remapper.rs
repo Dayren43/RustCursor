@@ -44,7 +44,7 @@ pub fn remap_transition(
             if let Some(dest_mon) =
                 monitor_for_x(new_x, monitors).filter(|m| m.identifier != old_mon.identifier)
             {
-                let old_physical_y = cursor_mapper::to_physical(
+                let old_local_y = cursor_mapper::to_physical(
                     Point {
                         x: old_x as f32,
                         y: old_y as f32,
@@ -52,10 +52,15 @@ pub fn remap_transition(
                     old_mon,
                 )
                 .y;
+                // Map source-local mm -> shared world mm -> destination-local mm
+                // so the cursor lands at the same world height regardless of the
+                // two monitors' physical y-offsets.
+                let world_y = old_mon.position_mm.y + old_local_y;
+                let target_local_y = world_y - dest_mon.position_mm.y;
                 let target_os_y = cursor_mapper::to_os_pos(
                     Point {
                         x: 0.0,
-                        y: old_physical_y,
+                        y: target_local_y,
                     },
                     dest_mon,
                 )
@@ -101,14 +106,14 @@ pub fn remap_transition(
 
             let horizontal_crossing = (new_cx - old_cx).abs() >= (new_cy - old_cy).abs();
 
-            let old_physical = cursor_mapper::to_physical(
+            let old_local = cursor_mapper::to_physical(
                 Point {
                     x: old_x as f32,
                     y: old_y as f32,
                 },
                 old_mon,
             );
-            let new_physical = cursor_mapper::to_physical(
+            let new_local = cursor_mapper::to_physical(
                 Point {
                     x: new_x as f32,
                     y: new_y as f32,
@@ -116,20 +121,35 @@ pub fn remap_transition(
                 new_mon,
             );
 
-            // Preserve physical height for horizontal crossings, physical x for vertical.
-            let target_physical = if horizontal_crossing {
+            // Translate both endpoints into shared world mm so the layout's
+            // per-monitor `position_mm` offsets factor into the crossing.
+            let old_world = Point {
+                x: old_mon.position_mm.x + old_local.x,
+                y: old_mon.position_mm.y + old_local.y,
+            };
+            let new_world = Point {
+                x: new_mon.position_mm.x + new_local.x,
+                y: new_mon.position_mm.y + new_local.y,
+            };
+
+            // Preserve world height for horizontal crossings, world x for vertical.
+            let target_world = if horizontal_crossing {
                 Point {
-                    x: new_physical.x,
-                    y: old_physical.y,
+                    x: new_world.x,
+                    y: old_world.y,
                 }
             } else {
                 Point {
-                    x: old_physical.x,
-                    y: new_physical.y,
+                    x: old_world.x,
+                    y: new_world.y,
                 }
             };
 
-            let target_os = cursor_mapper::to_os_pos(target_physical, new_mon);
+            let target_local = Point {
+                x: target_world.x - new_mon.position_mm.x,
+                y: target_world.y - new_mon.position_mm.y,
+            };
+            let target_os = cursor_mapper::to_os_pos(target_local, new_mon);
             let tx = (target_os.x as i32).clamp(
                 new_mon.bounds.x as i32,
                 (new_mon.bounds.x + new_mon.bounds.w - 1.0) as i32,
@@ -159,6 +179,7 @@ mod tests {
             identifier: id.to_string(),
             hwid: None,
             bounds: Rect { x, y, w, h },
+            position_mm: Point { x: 0.0, y: 0.0 },
             aspect_ratio: w / h,
             resolution: (w as u32, h as u32),
             dpi,
@@ -197,6 +218,23 @@ mod tests {
             result.is_none(),
             "No correction expected within same monitor"
         );
+    }
+
+    /// With the destination monitor pinned 50 mm lower in shared world space
+    /// (its top edge below the source's), a horizontal crossing from the
+    /// source's vertical centre preserves world-y, which on the destination
+    /// is 50 mm above its own centre, i.e. a smaller pixel y.
+    #[test]
+    fn position_mm_offset_shifts_landing() {
+        let mut monitors = HashMap::new();
+        let src = make_monitor("src", 0.0, 0.0, 1920.0, 1080.0, 81.59);
+        let mut dst = make_monitor("dst", 1920.0, 0.0, 1920.0, 1080.0, 81.59);
+        dst.position_mm = Point { x: 597.5, y: 50.0 };
+        monitors.insert("src".into(), src);
+        monitors.insert("dst".into(), dst);
+
+        let (_, ty) = remap_transition(1919, 540, 1920, 540, &monitors).expect("crossing");
+        assert!(ty < 540, "expected landing above destination centre, got y={ty}");
     }
 
     #[test]

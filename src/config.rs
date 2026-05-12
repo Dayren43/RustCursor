@@ -148,25 +148,39 @@ pub fn path() -> Option<PathBuf> {
 // HWID-keyed lookup takes precedence; legacy device-keyed entries are the
 // fallback for unmigrated configs.
 
+struct HwidEntry {
+    size_in: f32,
+    position_mm: Option<(f32, f32)>,
+}
+
 struct ActiveSizes {
-    by_hwid: HashMap<String, f32>,
+    by_hwid: HashMap<String, HwidEntry>,
     by_device: HashMap<String, f32>,
     default: f32,
 }
 
 static SIZES: OnceLock<ActiveSizes> = OnceLock::new();
 
-/// Install the per-monitor size lookup from a resolved active profile plus the
-/// legacy device-keyed list (used as fallback). Call once at startup before
-/// any `build_monitor_map` invocation. Calling more than once is a no-op.
-pub fn install_active_sizes(
+/// Install the per-monitor size and position lookup from a resolved active
+/// profile plus the legacy device-keyed list (used as a size-only fallback).
+/// Call once at startup before any `build_monitor_map` invocation. Calling
+/// more than once is a no-op.
+pub fn install_active_profile(
     profile_monitors: Vec<ProfileMonitor>,
     legacy_monitors: Vec<MonitorEntry>,
     default: f32,
 ) {
     let by_hwid = profile_monitors
         .into_iter()
-        .map(|m| (m.hwid, m.size_in))
+        .map(|m| {
+            (
+                m.hwid,
+                HwidEntry {
+                    size_in: m.size_in,
+                    position_mm: m.position_mm.map(|p| (p[0], p[1])),
+                },
+            )
+        })
         .collect();
     let by_device = legacy_monitors
         .into_iter()
@@ -182,14 +196,14 @@ pub fn install_active_sizes(
 /// Diagonal size in inches for a monitor identified by OS slot and (when
 /// available) stable HWID. HWID match wins; legacy device-name match is the
 /// fallback; finally `default_size_in` (or the hard 27.0 fallback if
-/// `install_active_sizes` was never called).
+/// `install_active_profile` was never called).
 pub fn size_for(device: &str, hwid: Option<&str>) -> f32 {
     let Some(sizes) = SIZES.get() else {
         return 27.0;
     };
     if let Some(h) = hwid {
-        if let Some(&s) = sizes.by_hwid.get(h) {
-            return s;
+        if let Some(e) = sizes.by_hwid.get(h) {
+            return e.size_in;
         }
     }
     sizes
@@ -197,6 +211,15 @@ pub fn size_for(device: &str, hwid: Option<&str>) -> f32 {
         .get(device)
         .copied()
         .unwrap_or(sizes.default)
+}
+
+/// Physical top-left in shared millimetre coordinates for a monitor, if the
+/// active profile pins one. `None` means the caller should fall back to the
+/// runtime default (left-to-right cumulative-width seeding).
+pub fn position_for(_device: &str, hwid: Option<&str>) -> Option<(f32, f32)> {
+    let sizes = SIZES.get()?;
+    let h = hwid?;
+    sizes.by_hwid.get(h)?.position_mm
 }
 
 const DEFAULT_CONFIG: &str = "\
