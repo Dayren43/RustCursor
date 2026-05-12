@@ -157,6 +157,7 @@ mod tests {
     fn make_monitor(id: &str, x: f32, y: f32, w: f32, h: f32, dpi: f64) -> Monitor {
         Monitor {
             identifier: id.to_string(),
+            hwid: None,
             bounds: Rect { x, y, w, h },
             aspect_ratio: w / h,
             resolution: (w as u32, h as u32),

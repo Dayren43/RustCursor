@@ -55,21 +55,43 @@ Switching backends requires restarting RustCursor. The currently active backend 
 
 ## Monitor physical sizes
 
-The remap math needs each monitor's physical diagonal size to convert pixels to millimetres. A `default_size_in` (inches) applies to every monitor unless overridden:
+The remap math needs each monitor's physical diagonal size to convert pixels to millimetres. A `default_size_in` (inches) applies to every monitor unless overridden.
+
+Overrides are stored per **display set** under `[[profile]]`. A profile matches when its `hwids` field (a set of stable monitor IDs) equals the set of monitors currently plugged in, so docking/undocking a laptop or rearranging cables picks the right layout automatically. The Settings GUI writes profiles for you; the hand-edited form looks like:
 
 ```toml
 default_size_in = 27.0
 
+[[profile]]
+hwids       = ["MONITOR\\DEL41B7", "MONITOR\\GSM5BAF"]
+description = "Dell 27 + LG 27"
+
+[[profile.monitor]]
+hwid        = "MONITOR\\DEL41B7"
+size_in     = 27.0
+
+[[profile.monitor]]
+hwid        = "MONITOR\\GSM5BAF"
+size_in     = 24.0
+```
+
+HWIDs are read from the EDID manufacturer + product code via `EnumDisplayDevices`; find yours in the Settings GUI's Monitors tab or look up the device instance ID under `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY` in the registry. Restart RustCursor after editing.
+
+### Legacy device-name overrides
+
+Configs written before profiles existed used `[[monitor]]` entries keyed by Windows' OS slot (`\\.\DISPLAYx`):
+
+```toml
 [[monitor]]
 device  = '\\.\DISPLAY1'
 size_in = 27.0
-
-[[monitor]]
-device  = '\\.\DISPLAY2'
-size_in = 24.0
 ```
 
-Device names are Windows' `\\.\DISPLAYx`; they're logged at session start in `cursor_log.txt`. TOML literal strings (single quotes) avoid having to double-escape the backslashes. Restart RustCursor after editing.
+These are still read as a fallback for any monitor that has no matching `[[profile.monitor]]` entry, so existing configs keep working. The Settings GUI does not write this form for new entries.
+
+### Identical-model limitation
+
+Two monitors of the exact same make and model share an HWID prefix (e.g. both report `MONITOR\DEL41B7`), so a setup with two identical panels cannot tell them apart by HWID alone. The planned fix is to additionally parse the EDID serial number from `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\<MMMPPPP>\<instance>\Device Parameters\EDID` and append it to the HWID string. The on-disk schema does not change when this lands; HWID just becomes more specific.
 
 ## Run elevated
 

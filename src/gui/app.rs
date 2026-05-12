@@ -4,6 +4,7 @@ use eframe::egui;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::gui::tabs::general::GeneralTab;
+use crate::gui::tabs::monitors::MonitorsTab;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -17,6 +18,7 @@ enum Tab {
 struct SettingsApp {
     tab: Tab,
     general: GeneralTab,
+    monitors: MonitorsTab,
     /// True once we've published the HWND to `gui::HWND_PTR`. Done on the
     /// first frame because `eframe::Frame` only exposes a window handle
     /// after the OS window has been created.
@@ -28,6 +30,7 @@ impl Default for SettingsApp {
         Self {
             tab: Tab::default(),
             general: GeneralTab::new(),
+            monitors: MonitorsTab::new(),
             hwnd_published: false,
         }
     }
@@ -64,10 +67,7 @@ impl eframe::App for SettingsApp {
 
         egui::CentralPanel::default().show(ctx, |ui| match self.tab {
             Tab::General => self.general.ui(ui),
-            Tab::Monitors => {
-                ui.heading("Monitors");
-                ui.label("Live monitor list with per-device size_in overrides.");
-            }
+            Tab::Monitors => self.monitors.ui(ui),
             Tab::Bypass => {
                 ui.heading("Bypass");
                 ui.label("Foreground processes that pause remapping while focused.");

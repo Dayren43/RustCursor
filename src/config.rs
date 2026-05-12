@@ -23,19 +23,45 @@ pub enum Backend {
     Lowlevel,
 }
 
-/// Per-monitor override entry from the `[[monitor]]` array of tables.
+/// Legacy per-monitor entry keyed by Windows OS slot (e.g. `\\.\DISPLAY1`).
+/// Still read for backward compatibility with configs written before
+/// `[[profile]]` existed; new writes from the GUI go to profiles instead.
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct MonitorEntry {
-    /// Windows device name, e.g. `\\.\DISPLAY1`. Find yours in
-    /// `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
     pub device: String,
-    /// Physical diagonal size in inches.
     pub size_in: f32,
+}
+
+/// Per-monitor entry inside a `[[profile.monitor]]` array. Keyed by stable
+/// HWID rather than OS slot so cable swaps and port changes don't re-trigger
+/// first-time setup.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct ProfileMonitor {
+    pub hwid: String,
+    pub size_in: f32,
+    /// Physical position of the monitor's top-left corner in the profile's
+    /// shared millimetre coordinate space. Consumed by the remapper from
+    /// the math-rewrite commit onward; absent on entries created before that.
+    #[serde(default)]
+    pub position_mm: Option<[f32; 2]>,
+}
+
+/// Layout for one specific set of connected monitors. The `hwids` field is
+/// matched (order-independent) against the currently-connected HWIDs to pick
+/// the active profile at startup.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct Profile {
+    #[serde(default)]
+    pub hwids: Vec<String>,
+    /// Human description, regenerated when the GUI writes the profile.
+    #[serde(default)]
+    pub description: String,
+    #[serde(default, rename = "monitor")]
+    pub monitors: Vec<ProfileMonitor>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    /// Which mouse-input backend to use.
     #[serde(default)]
     pub backend: Backend,
 
@@ -44,13 +70,19 @@ pub struct Config {
     #[serde(default)]
     pub bypass_processes: Vec<String>,
 
-    /// Diagonal size in inches used when a monitor has no `[[monitor]]` override.
+    /// Diagonal size in inches used when no profile or legacy entry matches.
     #[serde(default = "default_size_in")]
     pub default_size_in: f32,
 
-    /// Per-monitor diagonal-size overrides. Serialised as `[[monitor]]` tables.
+    /// HWID-keyed layouts. The profile whose `hwids` set equals the currently
+    /// connected HWID set is selected at startup.
+    #[serde(default, rename = "profile")]
+    pub profiles: Vec<Profile>,
+
+    /// Legacy device-keyed overrides. Read but never re-written; the GUI
+    /// migrates these into a profile the first time the user edits a value.
     #[serde(default, rename = "monitor")]
-    pub monitors: Vec<MonitorEntry>,
+    pub legacy_monitors: Vec<MonitorEntry>,
 }
 
 impl Default for Config {
@@ -59,7 +91,8 @@ impl Default for Config {
             backend: Backend::default(),
             bypass_processes: Vec::new(),
             default_size_in: default_size_in(),
-            monitors: Vec::new(),
+            profiles: Vec::new(),
+            legacy_monitors: Vec::new(),
         }
     }
 }
@@ -87,6 +120,20 @@ impl Config {
             Err(_) => Self::default(),
         }
     }
+
+    /// Find the profile whose HWID set equals `connected` (order-independent).
+    /// Returns `None` when no profile matches; callers should treat that as
+    /// "fresh layout" and either synthesize defaults at runtime or prompt the
+    /// user to create one via the GUI.
+    pub fn active_profile(&self, connected: &[String]) -> Option<&Profile> {
+        let mut want: Vec<&str> = connected.iter().map(String::as_str).collect();
+        want.sort();
+        self.profiles.iter().find(|p| {
+            let mut have: Vec<&str> = p.hwids.iter().map(String::as_str).collect();
+            have.sort();
+            have == want
+        })
+    }
 }
 
 /// Path to the config file: `%LOCALAPPDATA%\RustCursor\config.toml`.
@@ -95,36 +142,61 @@ pub fn path() -> Option<PathBuf> {
         .map(|s| PathBuf::from(s).join("RustCursor").join("config.toml"))
 }
 
-// ── Per-monitor physical size lookup ────────────────────────────────────────
-// Installed once at startup; read by `build_monitor_map` (initial enumeration)
-// and by the WM_DISPLAYCHANGE handler (rebuild on layout change).
+// ── Active-sizes lookup ────────────────────────────────────────────────────
+// Installed once at startup; consulted by `build_monitor_map` (initial
+// enumeration) and by the WM_DISPLAYCHANGE handler (rebuild on layout change).
+// HWID-keyed lookup takes precedence; legacy device-keyed entries are the
+// fallback for unmigrated configs.
 
-struct SizeMap {
-    overrides: HashMap<String, f32>,
+struct ActiveSizes {
+    by_hwid: HashMap<String, f32>,
+    by_device: HashMap<String, f32>,
     default: f32,
 }
 
-static SIZES: OnceLock<SizeMap> = OnceLock::new();
+static SIZES: OnceLock<ActiveSizes> = OnceLock::new();
 
-/// Install the per-monitor size lookup from a loaded `Config`. Call once at
-/// startup before any `build_monitor_map` invocation. Calling more than once
-/// is a no-op.
-pub fn install_monitor_sizes(monitors: Vec<MonitorEntry>, default: f32) {
-    let overrides = monitors
+/// Install the per-monitor size lookup from a resolved active profile plus the
+/// legacy device-keyed list (used as fallback). Call once at startup before
+/// any `build_monitor_map` invocation. Calling more than once is a no-op.
+pub fn install_active_sizes(
+    profile_monitors: Vec<ProfileMonitor>,
+    legacy_monitors: Vec<MonitorEntry>,
+    default: f32,
+) {
+    let by_hwid = profile_monitors
         .into_iter()
-        .map(|e| (e.device, e.size_in))
+        .map(|m| (m.hwid, m.size_in))
         .collect();
-    let _ = SIZES.set(SizeMap { overrides, default });
+    let by_device = legacy_monitors
+        .into_iter()
+        .map(|m| (m.device, m.size_in))
+        .collect();
+    let _ = SIZES.set(ActiveSizes {
+        by_hwid,
+        by_device,
+        default,
+    });
 }
 
-/// Diagonal size in inches for the given Windows device name. Returns the
-/// configured default (or a hard fallback of 27.0 if `install_monitor_sizes`
-/// was never called) when no override matches.
-pub fn size_for(device: &str) -> f32 {
-    SIZES
-        .get()
-        .map(|s| s.overrides.get(device).copied().unwrap_or(s.default))
-        .unwrap_or(27.0)
+/// Diagonal size in inches for a monitor identified by OS slot and (when
+/// available) stable HWID. HWID match wins; legacy device-name match is the
+/// fallback; finally `default_size_in` (or the hard 27.0 fallback if
+/// `install_active_sizes` was never called).
+pub fn size_for(device: &str, hwid: Option<&str>) -> f32 {
+    let Some(sizes) = SIZES.get() else {
+        return 27.0;
+    };
+    if let Some(h) = hwid {
+        if let Some(&s) = sizes.by_hwid.get(h) {
+            return s;
+        }
+    }
+    sizes
+        .by_device
+        .get(device)
+        .copied()
+        .unwrap_or(sizes.default)
 }
 
 const DEFAULT_CONFIG: &str = "\
@@ -147,19 +219,26 @@ backend = \"lowlevel\"
 # being detected automatically (e.g. windowed-fullscreen titles).
 bypass_processes = []
 
-# Default physical monitor diagonal size in inches. Used when a monitor is
-# not listed in [[monitor]] below.
+# Default physical monitor diagonal size in inches. Used when no [[profile]]
+# matches the currently connected monitors, or a connected monitor has no
+# per-HWID entry.
 default_size_in = 27.0
 
-# Per-monitor physical size overrides. The device name is Windows'
-# \\\\.\\DISPLAYx; look at %LOCALAPPDATA%\\RustCursor\\cursor_log.txt to see
-# the names assigned to your current monitors.
+# Per-display-set layouts. A profile applies when its `hwids` set equals the
+# currently connected monitors' set (order-independent). The Settings GUI
+# writes profiles automatically; you usually do not need to edit by hand.
 #
-# [[monitor]]
-# device = '\\\\.\\DISPLAY1'
-# size_in = 27.0
+# [[profile]]
+# hwids = [\"MONITOR\\\\DEL41B7\", \"MONITOR\\\\GSM5BAF\"]
+# description = \"Dell 27 + LG 27\"
 #
-# [[monitor]]
-# device = '\\\\.\\DISPLAY2'
-# size_in = 24.0
+# [[profile.monitor]]
+# hwid        = \"MONITOR\\\\DEL41B7\"
+# size_in     = 27.0
+# position_mm = [0.0, 0.0]
+#
+# [[profile.monitor]]
+# hwid        = \"MONITOR\\\\GSM5BAF\"
+# size_in     = 27.0
+# position_mm = [600.0, 0.0]
 ";

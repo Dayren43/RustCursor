@@ -5,15 +5,23 @@ use std::os::windows::ffi::OsStringExt;
 use windows::{
     Win32::{
         Foundation::{LPARAM, RECT},
-        Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, MONITORINFOEXW},
+        Graphics::Gdi::{
+            DISPLAY_DEVICEW, EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW, HDC,
+            MONITORINFOEXW,
+        },
     },
-    core::BOOL,
+    core::{BOOL, PCWSTR},
 };
 
 use rust_cursor::core::{Monitor, geometry::Rect};
 
 struct MonitorInfo {
+    /// Windows OS slot name, e.g. `\\.\DISPLAY1`.
     name: String,
+    /// Stable hardware ID for this physical panel, e.g. `MONITOR\DEL41B7`.
+    /// `None` when the slot is empty or the OS does not report a child device
+    /// for the adapter.
+    hwid: Option<String>,
     rect: RECT,
 }
 
@@ -43,8 +51,11 @@ unsafe extern "system" fn monitor_enum_proc(
             .to_string_lossy()
             .into_owned();
 
+        let hwid = monitor_hwid(&name);
+
         monitors.push(MonitorInfo {
             name,
+            hwid,
             rect: mi_ex.monitorInfo.rcMonitor,
         });
         true.into()
@@ -64,6 +75,46 @@ fn enumerate_monitors() -> Vec<MonitorInfo> {
     monitors
 }
 
+/// Query the hardware ID of the panel attached to `adapter` (e.g.
+/// `\\.\DISPLAY1`). Returns a prefix-stable identifier built from the EDID
+/// manufacturer + product code, e.g. `MONITOR\DEL41B7`. This survives cable
+/// swaps, port changes, and driver reinstalls, but two identical models
+/// (same make + model number) share the same ID; see README for the planned
+/// EDID-serial extension that would disambiguate them.
+fn monitor_hwid(adapter: &str) -> Option<String> {
+    let adapter_w: Vec<u16> = adapter.encode_utf16().chain([0]).collect();
+    let mut child = DISPLAY_DEVICEW {
+        cb: std::mem::size_of::<DISPLAY_DEVICEW>() as u32,
+        ..Default::default()
+    };
+    let ok = unsafe { EnumDisplayDevicesW(PCWSTR(adapter_w.as_ptr()), 0, &mut child, 0) };
+    if !ok.as_bool() {
+        return None;
+    }
+    let len = child
+        .DeviceID
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(child.DeviceID.len());
+    let id = OsString::from_wide(&child.DeviceID[..len])
+        .to_string_lossy()
+        .into_owned();
+    parse_hwid_prefix(&id)
+}
+
+/// Extract `MONITOR\MMMPPPP` from a Windows device instance ID like
+/// `MONITOR\DEL41B7\{4d36e96e-...}\0000`.
+fn parse_hwid_prefix(device_id: &str) -> Option<String> {
+    let mut parts = device_id.split('\\');
+    let prefix = parts.next()?;
+    let model = parts.next()?;
+    if prefix.eq_ignore_ascii_case("MONITOR") && !model.is_empty() {
+        Some(format!("{prefix}\\{model}"))
+    } else {
+        None
+    }
+}
+
 /// Declare PER_MONITOR_AWARE_V2 so all coordinate APIs use physical pixels,
 /// consistent with the raw device counts Interception delivers.
 pub fn setup_dpi_awareness() {
@@ -75,13 +126,26 @@ pub fn setup_dpi_awareness() {
     }
 }
 
-/// Enumerate all connected monitors and build the monitor map used by the remapper.
-/// Physical sizes come from `config::size_for(device)`: per-monitor overrides
-/// from `[[monitor]]` in config.toml, falling back to `default_size_in`.
+/// Connected HWIDs in stable sorted order. Used at startup to pick the
+/// active `[[profile]]` from `config.toml`.
+pub fn enumerate_hwids() -> Vec<String> {
+    let mut hwids: Vec<String> = enumerate_monitors()
+        .into_iter()
+        .filter_map(|m| m.hwid)
+        .collect();
+    hwids.sort();
+    hwids
+}
+
+/// Enumerate all connected monitors and build the monitor map used by the
+/// remapper. Physical sizes come from `config::size_for(device, hwid)`: the
+/// active profile's per-HWID entry takes precedence, falling back to a
+/// legacy device-keyed `[[monitor]]` entry, then to `default_size_in`.
 pub fn build_monitor_map() -> HashMap<String, Monitor> {
     let mut map = HashMap::new();
     for m in enumerate_monitors() {
-        let physical_size_in: f64 = rust_cursor::config::size_for(&m.name) as f64;
+        let physical_size_in: f64 =
+            rust_cursor::config::size_for(&m.name, m.hwid.as_deref()) as f64;
         let pixels_w = (m.rect.right - m.rect.left) as u32;
         let pixels_h = (m.rect.bottom - m.rect.top) as u32;
         let aspect_ratio = pixels_w as f32 / pixels_h as f32;
@@ -90,6 +154,7 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
             m.name.clone(),
             Monitor {
                 identifier: m.name.clone(),
+                hwid: m.hwid,
                 bounds: Rect {
                     x: m.rect.left as f32,
                     y: m.rect.top as f32,

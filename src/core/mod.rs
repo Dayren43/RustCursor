@@ -4,7 +4,12 @@ use crate::core::geometry::Rect;
 
 #[derive(Debug, Clone)]
 pub struct Monitor {
+    /// Windows OS slot, e.g. `\\.\DISPLAY1`. Not stable across cable swaps.
     pub identifier: String,
+    /// Stable hardware ID (e.g. `MONITOR\DEL41B7`). `None` on platforms or
+    /// configurations where one cannot be determined; falls back to keying
+    /// by `identifier` in that case.
+    pub hwid: Option<String>,
     pub bounds: Rect,
     pub aspect_ratio: f32,
     pub resolution: (u32, u32),
@@ -100,6 +105,7 @@ mod tests {
     fn make_test_monitor(x: f32, y: f32, w: f32, h: f32, physical_in: f32) -> Monitor {
         Monitor {
             identifier: format!("Test {}x{}", w as u32, h as u32),
+            hwid: None,
             bounds: Rect { x, y, w, h },
             aspect_ratio: if h.abs() < f32::EPSILON {
                 16.0 / 9.0
