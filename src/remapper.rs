@@ -21,6 +21,27 @@ pub fn monitor_for_x(x: i32, monitors: &HashMap<String, Monitor>) -> Option<&Mon
         .find(|m| x >= m.bounds.x as i32 && x < (m.bounds.x + m.bounds.w) as i32)
 }
 
+/// Pin a cursor position to source monitor bounds in OS pixel space. Used to
+/// "block" a crossing when the user-defined physical layout doesn't actually
+/// share a continuous edge at the cursor's height (or width, for vertical
+/// crossings): the cursor slides along the source's edge and only crosses
+/// where the destination physically exists.
+fn pin_to_source(old_mon: &Monitor, new_x: i32, new_y: i32) -> Option<(i32, i32)> {
+    let pinned_x = new_x.clamp(
+        old_mon.bounds.x as i32,
+        (old_mon.bounds.x + old_mon.bounds.w - 1.0) as i32,
+    );
+    let pinned_y = new_y.clamp(
+        old_mon.bounds.y as i32,
+        (old_mon.bounds.y + old_mon.bounds.h - 1.0) as i32,
+    );
+    if pinned_x == new_x && pinned_y == new_y {
+        None
+    } else {
+        Some((pinned_x, pinned_y))
+    }
+}
+
 /// Compute the corrected cursor position when crossing a monitor boundary.
 ///
 /// Returns `Some((x, y))` when a correction is needed, `None` when the raw
@@ -56,6 +77,15 @@ pub fn remap_transition(
                 // so the cursor lands at the same world height regardless of the
                 // two monitors' physical y-offsets.
                 let world_y = old_mon.position_mm.y + old_local_y;
+                let (_, dest_h_mm) = dest_mon.physical_size_mm();
+                let dest_world_top = dest_mon.position_mm.y;
+                let dest_world_bottom = dest_world_top + dest_h_mm;
+                if world_y < dest_world_top || world_y > dest_world_bottom {
+                    // Destination doesn't physically exist at this world height
+                    // (user-defined layout has the source extending above or
+                    // below the destination). Block the crossing.
+                    return pin_to_source(old_mon, new_x, new_y);
+                }
                 let target_local_y = world_y - dest_mon.position_mm.y;
                 let target_os_y = cursor_mapper::to_os_pos(
                     Point {
@@ -144,6 +174,23 @@ pub fn remap_transition(
                     y: new_world.y,
                 }
             };
+
+            // If the preserved world axis falls outside the destination's
+            // physical extent, the user's layout has no shared edge here.
+            // Block the crossing so the cursor slides along the source's edge.
+            let (dest_w_mm, dest_h_mm) = new_mon.physical_size_mm();
+            let dest_world_left = new_mon.position_mm.x;
+            let dest_world_right = dest_world_left + dest_w_mm;
+            let dest_world_top = new_mon.position_mm.y;
+            let dest_world_bottom = dest_world_top + dest_h_mm;
+            let preserved_in_bounds = if horizontal_crossing {
+                target_world.y >= dest_world_top && target_world.y <= dest_world_bottom
+            } else {
+                target_world.x >= dest_world_left && target_world.x <= dest_world_right
+            };
+            if !preserved_in_bounds {
+                return pin_to_source(old_mon, new_x, new_y);
+            }
 
             let target_local = Point {
                 x: target_world.x - new_mon.position_mm.x,
@@ -235,6 +282,52 @@ mod tests {
 
         let (_, ty) = remap_transition(1919, 540, 1920, 540, &monitors).expect("crossing");
         assert!(ty < 540, "expected landing above destination centre, got y={ty}");
+    }
+
+    /// Tall portrait monitor at world (0, 0) -> ~600 mm tall; short landscape
+    /// to its right mounted 100 mm down in world coords so it doesn't cover
+    /// the portrait's top region. Crossing right from the portrait's top
+    /// should be blocked (cursor pinned to portrait's right edge) because the
+    /// landscape doesn't physically exist at that world height.
+    #[test]
+    fn crossing_blocked_when_dest_missing_at_world_y() {
+        let mut monitors = HashMap::new();
+        let mut portrait = make_monitor("portrait", 0.0, 0.0, 1080.0, 1920.0, 81.59);
+        portrait.position_mm = Point { x: 0.0, y: 0.0 };
+        let mut landscape = make_monitor("landscape", 1080.0, 0.0, 1920.0, 1080.0, 81.59);
+        // Touching horizontally at portrait's right (336 mm), 100 mm down.
+        landscape.position_mm = Point { x: 336.3, y: 100.0 };
+        monitors.insert("portrait".into(), portrait);
+        monitors.insert("landscape".into(), landscape);
+
+        let (tx, _ty) =
+            remap_transition(1079, 5, 1080, 5, &monitors).expect("expected pin to source");
+        assert!(
+            tx < 1080,
+            "expected cursor pinned to portrait's right edge, got x={tx}"
+        );
+    }
+
+    /// Same layout but cursor at a y where the landscape DOES exist in world
+    /// coords; the crossing should be allowed (cursor lands on the landscape).
+    #[test]
+    fn crossing_allowed_when_dest_covers_world_y() {
+        let mut monitors = HashMap::new();
+        let mut portrait = make_monitor("portrait", 0.0, 0.0, 1080.0, 1920.0, 81.59);
+        portrait.position_mm = Point { x: 0.0, y: 0.0 };
+        let mut landscape = make_monitor("landscape", 1080.0, 0.0, 1920.0, 1080.0, 81.59);
+        landscape.position_mm = Point { x: 336.3, y: 100.0 };
+        monitors.insert("portrait".into(), portrait);
+        monitors.insert("landscape".into(), landscape);
+
+        // Portrait y=600 -> world_y ~= 600/1920 * 598 = 186.9 mm, inside
+        // landscape's world-y range [100, 436].
+        let (tx, _ty) =
+            remap_transition(1079, 600, 1080, 600, &monitors).expect("expected crossing");
+        assert!(
+            tx >= 1080,
+            "expected cursor on landscape, got x={tx}"
+        );
     }
 
     #[test]
