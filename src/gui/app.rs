@@ -87,7 +87,8 @@ pub fn run() {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 420.0])
             .with_min_inner_size([400.0, 300.0])
-            .with_title("RustCursor Settings"),
+            .with_title("RustCursor Settings")
+            .with_icon(load_window_icon()),
         // winit defaults to main-thread-only; we run the window on a worker
         // thread spawned from the tray, so opt into any-thread construction.
         event_loop_builder: Some(Box::new(|builder| {
@@ -100,4 +101,20 @@ pub fn run() {
         options,
         Box::new(|_cc| Ok(Box::<SettingsApp>::default())),
     );
+}
+
+/// Decode the bundled PNG into the icon shown in the window's title bar and
+/// Windows taskbar entry. Same asset the tray icon uses, embedded at compile
+/// time so the exe is self-contained.
+fn load_window_icon() -> egui::IconData {
+    const ICON_PNG: &[u8] = include_bytes!("../../assets/rustcursor-icon.png");
+    let img = image::load_from_memory(ICON_PNG)
+        .expect("decode window icon PNG")
+        .into_rgba8();
+    let (w, h) = img.dimensions();
+    egui::IconData {
+        rgba: img.into_raw(),
+        width: w,
+        height: h,
+    }
 }
