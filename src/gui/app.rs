@@ -1,7 +1,9 @@
-//! eframe application: tab dispatch and the per-frame UI. Tabs are stubs for
-//! now; each one will move into its own module under `gui/tabs/` as they grow.
+//! eframe application: HWND publication, close intercept, and tab dispatch.
 
 use eframe::egui;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+use crate::gui::tabs::general::GeneralTab;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -12,13 +14,45 @@ enum Tab {
     Log,
 }
 
-#[derive(Default)]
 struct SettingsApp {
     tab: Tab,
+    general: GeneralTab,
+    /// True once we've published the HWND to `gui::HWND_PTR`. Done on the
+    /// first frame because `eframe::Frame` only exposes a window handle
+    /// after the OS window has been created.
+    hwnd_published: bool,
+}
+
+impl Default for SettingsApp {
+    fn default() -> Self {
+        Self {
+            tab: Tab::default(),
+            general: GeneralTab::new(),
+            hwnd_published: false,
+        }
+    }
 }
 
 impl eframe::App for SettingsApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if !self.hwnd_published {
+            if let Ok(wh) = frame.window_handle() {
+                if let RawWindowHandle::Win32(w32) = wh.as_raw() {
+                    crate::gui::set_hwnd(w32.hwnd.get());
+                    self.hwnd_published = true;
+                }
+            }
+        }
+
+        // Intercept the close button: cancel the close so winit's EventLoop
+        // stays alive, then hide via Win32. Re-opening from the tray uses
+        // ShowWindow(SW_SHOW) on the same HWND.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            crate::gui::hide_window();
+            return;
+        }
+
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::General, "General");
@@ -29,10 +63,7 @@ impl eframe::App for SettingsApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| match self.tab {
-            Tab::General => {
-                ui.heading("General");
-                ui.label("Backend, auto-start, and physical-size defaults go here.");
-            }
+            Tab::General => self.general.ui(ui),
             Tab::Monitors => {
                 ui.heading("Monitors");
                 ui.label("Live monitor list with per-device size_in overrides.");
