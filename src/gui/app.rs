@@ -5,6 +5,7 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use crate::gui::tabs::bypass::BypassTab;
 use crate::gui::tabs::general::GeneralTab;
+use crate::gui::tabs::log::LogTab;
 use crate::gui::tabs::monitors::MonitorsTab;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,7 @@ struct SettingsApp {
     general: GeneralTab,
     monitors: MonitorsTab,
     bypass: BypassTab,
+    log: LogTab,
     /// True once we've published the HWND to `gui::HWND_PTR`. Done on the
     /// first frame because `eframe::Frame` only exposes a window handle
     /// after the OS window has been created.
@@ -34,6 +36,7 @@ impl Default for SettingsApp {
             general: GeneralTab::new(),
             monitors: MonitorsTab::new(),
             bypass: BypassTab::new(),
+            log: LogTab::new(),
             hwnd_published: false,
         }
     }
@@ -72,10 +75,7 @@ impl eframe::App for SettingsApp {
             Tab::General => self.general.ui(ui),
             Tab::Monitors => self.monitors.ui(ui),
             Tab::Bypass => self.bypass.ui(ui),
-            Tab::Log => {
-                ui.heading("Log");
-                ui.label("Tail of %LOCALAPPDATA%\\RustCursor\\cursor_log.txt.");
-            }
+            Tab::Log => self.log.ui(ui),
         });
     }
 }
