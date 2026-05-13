@@ -51,15 +51,15 @@ fn main() {
     // Must be registered on the main thread before run_tray_loop's message pump.
     platform::windows::register_display_listener(monitors.clone());
 
-    let bypass = config.bypass_processes;
+    rust_cursor::config::install_bypass_processes(config.bypass_processes);
     let backend = config.backend;
     let backend_monitors = monitors.clone();
     std::thread::spawn(move || match backend {
         rust_cursor::config::Backend::Interception => {
-            platform::windows::run_interception_loop(backend_monitors, bypass);
+            platform::windows::run_interception_loop(backend_monitors);
         }
         rust_cursor::config::Backend::Lowlevel => {
-            platform::windows::run_lowlevel_loop(backend_monitors, bypass);
+            platform::windows::run_lowlevel_loop(backend_monitors);
         }
     });
 

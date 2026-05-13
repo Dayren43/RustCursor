@@ -35,10 +35,7 @@ struct State {
 
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 
-pub fn run_lowlevel_loop(
-    monitors: Arc<RwLock<HashMap<String, Monitor>>>,
-    bypass_processes: Vec<String>,
-) {
+pub fn run_lowlevel_loop(monitors: Arc<RwLock<HashMap<String, Monitor>>>) {
     let log = open_log();
     let mut prev_pt = POINT::default();
     unsafe {
@@ -47,7 +44,7 @@ pub fn run_lowlevel_loop(
 
     let state = State {
         monitors,
-        focus: FocusGuard::new(bypass_processes),
+        focus: FocusGuard::new(),
         log,
         prev_pt,
     };

@@ -3,6 +3,7 @@
 use eframe::egui;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+use crate::gui::tabs::bypass::BypassTab;
 use crate::gui::tabs::general::GeneralTab;
 use crate::gui::tabs::monitors::MonitorsTab;
 
@@ -19,6 +20,7 @@ struct SettingsApp {
     tab: Tab,
     general: GeneralTab,
     monitors: MonitorsTab,
+    bypass: BypassTab,
     /// True once we've published the HWND to `gui::HWND_PTR`. Done on the
     /// first frame because `eframe::Frame` only exposes a window handle
     /// after the OS window has been created.
@@ -31,6 +33,7 @@ impl Default for SettingsApp {
             tab: Tab::default(),
             general: GeneralTab::new(),
             monitors: MonitorsTab::new(),
+            bypass: BypassTab::new(),
             hwnd_published: false,
         }
     }
@@ -68,10 +71,7 @@ impl eframe::App for SettingsApp {
         egui::CentralPanel::default().show(ctx, |ui| match self.tab {
             Tab::General => self.general.ui(ui),
             Tab::Monitors => self.monitors.ui(ui),
-            Tab::Bypass => {
-                ui.heading("Bypass");
-                ui.label("Foreground processes that pause remapping while focused.");
-            }
+            Tab::Bypass => self.bypass.ui(ui),
             Tab::Log => {
                 ui.heading("Log");
                 ui.label("Tail of %LOCALAPPDATA%\\RustCursor\\cursor_log.txt.");

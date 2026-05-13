@@ -10,7 +10,6 @@
 //!     foreground window's owning process is resolved per stroke (cached on
 //!     HWND) and matched case-insensitively.
 
-use std::collections::HashSet;
 use std::path::Path;
 
 use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
@@ -25,23 +24,13 @@ use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThre
 use windows::core::PWSTR;
 
 pub struct FocusGuard {
-    bypass: HashSet<String>,
     last_hwnd: isize,
     last_basename: Option<String>,
 }
 
 impl FocusGuard {
-    pub fn new<I, S>(bypass_processes: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let bypass = bypass_processes
-            .into_iter()
-            .map(|s| s.as_ref().to_lowercase())
-            .collect();
+    pub fn new() -> Self {
         Self {
-            bypass,
             last_hwnd: 0,
             last_basename: None,
         }
@@ -49,7 +38,9 @@ impl FocusGuard {
 
     /// Returns `true` when the current stroke should be forwarded unchanged
     /// (i.e. the user is in a fullscreen game or a whitelisted process is in
-    /// the foreground).
+    /// the foreground). The bypass list is read from the global
+    /// `config::is_bypassed` lookup each call so the GUI's Bypass tab can
+    /// swap it live without a RustCursor restart.
     pub fn should_skip_remap(&mut self) -> bool {
         // UAC's consent prompt runs on a separate "secure desktop" our process
         // can't reach. While it owns input, OpenInputDesktop fails for
@@ -73,11 +64,11 @@ impl FocusGuard {
             return true;
         }
 
-        if self.bypass.is_empty() {
+        if rust_cursor::config::bypass_is_empty() {
             return false;
         }
         match &self.last_basename {
-            Some(name) => self.bypass.contains(name),
+            Some(name) => rust_cursor::config::is_bypassed(name),
             None => false,
         }
     }

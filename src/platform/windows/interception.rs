@@ -16,11 +16,8 @@ use rust_cursor::remapper::{monitor_at_pixel, remap_transition};
 
 use super::focus::FocusGuard;
 
-pub fn run_interception_loop(
-    monitors: Arc<RwLock<HashMap<String, Monitor>>>,
-    bypass_processes: Vec<String>,
-) {
-    let mut focus = FocusGuard::new(bypass_processes);
+pub fn run_interception_loop(monitors: Arc<RwLock<HashMap<String, Monitor>>>) {
+    let mut focus = FocusGuard::new();
     let ic = Interception::new()
         .expect("Failed to create Interception context. Is the driver installed?");
 

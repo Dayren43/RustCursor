@@ -44,6 +44,16 @@ impl ConfigDoc {
         self.doc["default_size_in"] = value(inches as f64);
     }
 
+    /// Overwrite the `bypass_processes` array with the given list. The order
+    /// is preserved so the GUI's row order matches the file.
+    pub fn set_bypass_processes(&mut self, processes: &[String]) {
+        let mut arr = Array::new();
+        for p in processes {
+            arr.push(p.as_str());
+        }
+        self.doc["bypass_processes"] = value(arr);
+    }
+
     /// Legacy: upsert a `[[monitor]]` entry for `device`. Kept as a fallback
     /// for monitors that report no HWID; the GUI prefers `upsert_profile_monitor`
     /// when one is available.

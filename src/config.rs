@@ -1,7 +1,7 @@
 //! User-editable runtime config loaded from `%LOCALAPPDATA%\RustCursor\config.toml`.
 //! The file is created with documentation comments on first run.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -224,6 +224,36 @@ pub fn position_for(_device: &str, hwid: Option<&str>) -> Option<(f32, f32)> {
     sizes.by_hwid.get(h)?.position_mm
 }
 
+// ── Active bypass-process lookup ───────────────────────────────────────────
+// Consulted by `focus::FocusGuard::should_skip_remap` on every stroke. Stored
+// behind a RwLock so the GUI's Bypass tab can swap it after add/remove without
+// requiring a RustCursor restart. Stored lowercased for case-insensitive match.
+
+static BYPASS: RwLock<Option<HashSet<String>>> = RwLock::new(None);
+
+/// Install (or replace) the bypass-process lookup. Called once at startup
+/// from the loaded config and again from the GUI after every add/remove.
+pub fn install_bypass_processes(processes: Vec<String>) {
+    let set: HashSet<String> = processes.into_iter().map(|s| s.to_lowercase()).collect();
+    *BYPASS.write().expect("BYPASS poisoned") = Some(set);
+}
+
+/// True when the bypass list is empty (or never installed). Lets the caller
+/// skip the basename lookup entirely in the common no-bypass case.
+pub fn bypass_is_empty() -> bool {
+    let guard = BYPASS.read().expect("BYPASS poisoned");
+    guard.as_ref().map(|b| b.is_empty()).unwrap_or(true)
+}
+
+/// True when `basename` (already lowercased) is in the bypass list.
+pub fn is_bypassed(basename: &str) -> bool {
+    let guard = BYPASS.read().expect("BYPASS poisoned");
+    let Some(b) = guard.as_ref() else {
+        return false;
+    };
+    b.contains(basename)
+}
+
 /// Replace the runtime size + position for a HWID without touching disk.
 /// Used by the layout canvas to push every drag frame into the active SIZES
 /// lookup so cursor crossings reflect the new layout in real time; the GUI
@@ -242,6 +272,7 @@ pub fn override_hwid(hwid: &str, size_in: f32, position_mm: (f32, f32)) {
     );
 }
 
+//TODO replace with the nicer macro indoc!, indoc = "2.0.4"
 const DEFAULT_CONFIG: &str = "\
 # RustCursor config: %LOCALAPPDATA%\\RustCursor\\config.toml
 # Restart RustCursor after editing.
