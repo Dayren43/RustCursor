@@ -1,16 +1,17 @@
 # RustCursor
 
-Seamlessly moves the cursor between two monitors of different resolutions by remapping to the same **physical height** on the destination monitor. Built for a 1080p + 1440p pair of 27" displays side by side, but works for any two monitors with the same physical diagonal.
+Seamlessly moves the cursor between monitors of different resolutions, physical sizes, or mount positions by remapping through a shared physical-millimetre coordinate space. Built for a 1080p + 1440p pair of 27" displays side by side, and tunable to any layout from the Settings GUI.
 
 ## The problem
 
-Windows places the cursor at the raw pixel position when crossing monitor boundaries. A 1080p and a 1440p monitor have different pixel densities, so the cursor appears to jump up or down when crossing. At the vertical edges (where one monitor is taller in pixels than the other), Windows creates "gap zones" where the cursor can get trapped or snap erratically.
+Windows places the cursor at the raw pixel position when crossing monitor boundaries. Different pixel densities, OS y-offsets, and physical mount positions all conspire to make the cursor jump unpredictably. At the vertical edges where one monitor is taller in pixels than the other, Windows creates "gap zones" where the cursor can get trapped or snap erratically.
 
 ## How it works
 
 - Intercepts mouse strokes before they reach the foreground window. Two strategies are available; see [Backends](#backends) below.
-- Converts the source pixel position to physical millimetres using the monitor's diagonal and aspect ratio, then maps to the equivalent mm position on the destination monitor.
-- Gap zones (OS y-ranges that exist on one monitor but not the other due to y-offset in display settings) are handled by the same physical-space mapping, with no snapping to the nearest edge.
+- Translates the source pixel position into a shared physical millimetre coordinate space using the monitor's diagonal, aspect ratio, and its `position_mm` (the physical top-left in shared world coords).
+- Maps the cursor's world position onto the destination monitor so crossings preserve physical height (or physical x, for vertical crossings) regardless of pixel density.
+- Blocks crossings when the destination doesn't physically exist at the source's world position (e.g. portrait next to landscape, where the landscape doesn't cover the portrait's top). The cursor slides along the source's edge instead of jumping to the nearest valid pixel.
 
 ## Prerequisites
 
@@ -31,18 +32,29 @@ cargo build --release
 .\target\release\RustCursor.exe
 ```
 
-The app runs silently with no console window. A tray icon appears in the notification area; right-click it and choose **Quit RustCursor** to exit. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
+The app runs silently with no console window. A tray icon appears in the notification area; right-click it for **Settings…**, **Edit bypass list…**, and **Quit RustCursor**. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
 
 For the `interception` backend, `interception.dll` must sit next to the exe at runtime. The DLL is not redistributed by the `interception-sys` crate or installed by the driver; it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe automatically; provide it via either of:
 
 - A copy at `vendor/interception.dll` in the repo root (gitignored), or
 - The `INTERCEPTION_DLL` environment variable pointing at the absolute path.
 
+## Settings GUI
+
+Right-clicking the tray and choosing **Settings…** opens a tabbed configuration window. The close button hides the window to the tray; subsequent **Settings…** clicks re-show it.
+
+- **General**: input backend selector (`lowlevel` / `interception`), default monitor diagonal, and an auto-start-at-login toggle that wraps `schtasks` (prompts UAC when the running process isn't already elevated).
+- **Monitors**: drag-to-arrange layout canvas at the top, each monitor drawn at its physical aspect ratio. Edges snap to neighbours within 10 mm; hold **Alt** during a drag to disable snap. A per-monitor numeric diagonal editor sits underneath for typed precision. Size and position edits hot-reload, so cursor crossings reflect changes in real time without a restart.
+- **Bypass**: add/remove process basenames whose foreground focus pauses cursor remapping (case-insensitive). Hot-reloads on every edit.
+- **Log**: live tail of `cursor_log.txt` with an Auto-refresh toggle (500 ms tick) and an Open-in-editor button.
+
+Backend changes still require a restart because the input loop thread captures the backend at spawn.
+
 ## Pausing for fullscreen apps
 
 While focused on a fullscreen DirectX/Vulkan/OpenGL app, RustCursor automatically forwards strokes unchanged so games can keep cursor capture. Detection uses Windows' own `SHQueryUserNotificationState`, the same signal used to suppress toast notifications during gameplay, so F11 browsers, fullscreen video, and PowerPoint slideshows are *not* paused.
 
-For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list in `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run). Restart RustCursor to pick up changes. The tray menu's **Edit bypass list…** item opens the file in the default editor.
+For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list. The Settings GUI's **Bypass** tab is the easiest way; the underlying file is `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run) and the tray's **Edit bypass list…** item opens it in the default editor. Either path hot-reloads, no restart required.
 
 ## Backends
 
@@ -51,13 +63,13 @@ Set `backend` in `config.toml`:
 - **`lowlevel`** *(default)*: user-mode `WH_MOUSE_LL` hook. No driver needed, compatible with kernel anti-cheats (Vanguard, Javelin, kernel-mode EAC). A brief snap is visible at each monitor crossing.
 - **`interception`**: kernel-driver path via [Interception](https://github.com/oblitum/Interception). No snap artifact, but flagged by kernel anti-cheats. Requires the Interception driver to be installed.
 
-Switching backends requires restarting RustCursor. The currently active backend is shown as the first item in the tray menu.
+Switching backends requires restarting RustCursor. The currently active backend is shown as the first item in the tray menu and on the General tab of the Settings window.
 
-## Monitor physical sizes
+## Monitor physical sizes and layout
 
-The remap math needs each monitor's physical diagonal size to convert pixels to millimetres. A `default_size_in` (inches) applies to every monitor unless overridden.
+The remap math needs each monitor's physical diagonal size to convert pixels to millimetres, plus a `position_mm` for each monitor (the physical top-left in shared world coordinates). A `default_size_in` (inches) applies to every monitor without an explicit override; `position_mm` defaults to a left-to-right cumulative-width walk so monitors touch along their OS-x order with y=0.
 
-Overrides are stored per **display set** under `[[profile]]`. A profile matches when its `hwids` field (a set of stable monitor IDs) equals the set of monitors currently plugged in, so docking/undocking a laptop or rearranging cables picks the right layout automatically. The Settings GUI writes profiles for you; the hand-edited form looks like:
+Overrides are stored per **display set** under `[[profile]]`. A profile matches when its `hwids` field (a set of stable monitor IDs) equals the set of monitors currently plugged in, so docking/undocking a laptop or rearranging cables picks the right layout automatically. The Settings GUI's Monitors tab writes profiles for you; the hand-edited form looks like:
 
 ```toml
 default_size_in = 27.0
@@ -69,13 +81,15 @@ description = "Dell 27 + LG 27"
 [[profile.monitor]]
 hwid        = "MONITOR\\DEL41B7"
 size_in     = 27.0
+position_mm = [0.0, 0.0]
 
 [[profile.monitor]]
 hwid        = "MONITOR\\GSM5BAF"
 size_in     = 24.0
+position_mm = [597.5, 30.0]
 ```
 
-HWIDs are read from the EDID manufacturer + product code via `EnumDisplayDevices`; find yours in the Settings GUI's Monitors tab or look up the device instance ID under `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY` in the registry. Restart RustCursor after editing.
+HWIDs are read from the EDID manufacturer + product code via `EnumDisplayDevices`; find yours in the Settings GUI's Monitors tab (each row prints its HWID) or look up the device instance ID under `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY` in the registry. GUI edits hot-reload; hand-edits to `config.toml` still need a RustCursor restart.
 
 ### Identical-model limitation
 
@@ -87,37 +101,53 @@ RustCursor must run with administrator privileges. Without elevation, `SetCursor
 
 ## Auto-start at login
 
-Register a Task Scheduler entry that runs the exe with highest privileges at logon, with no UAC prompt at startup. From an elevated PowerShell:
+The Settings GUI's General tab has an **Auto-start at login** checkbox that wraps the same Task Scheduler entry shown below; toggling it from a non-elevated session triggers a UAC prompt for the `schtasks` call alone, so you never see UAC at *startup* itself.
+
+For the equivalent manual setup from an elevated PowerShell:
 
 ```
 schtasks /Create /TN "RustCursor" /SC ONLOGON /RL HIGHEST /TR "<absolute path to RustCursor.exe>" /F
 ```
 
-Smoke-test without rebooting: `schtasks /Run /TN "RustCursor"`. Remove with `schtasks /Delete /TN "RustCursor" /F`.
+Smoke-test without rebooting: `schtasks /Run /TN "RustCursor"`. Remove with `schtasks /Delete /TN "RustCursor" /F` (or untick the checkbox).
 
 ## Module layout
 
 ```
 build.rs                    copies interception.dll next to the built exe
-assets/                     bundled tray icon (PNG embedded via include_bytes!)
+assets/
+  rustcursor-icon.png       embedded in the exe; used for tray + Settings window
+  rustcursor-icon.svg       source vector
 src/
-  main.rs                   entry: DPI setup → monitors → event loop → tray
+  main.rs                   entry: DPI setup, profile resolution, loop spawn, tray
   lib.rs                    exports config, core, and remapper
-  config.rs                 user-editable TOML config (bypass list)
-  remapper.rs               platform-agnostic crossing logic and tests
+  config.rs                 TOML config types, active-profile resolution,
+                            runtime SIZES + BYPASS lookups (RwLock for live-reload)
+  remapper.rs               platform-agnostic crossing logic, world-coord math, tests
   core/
-    mod.rs                  Monitor struct and physical↔pixel mapping
+    mod.rs                  Monitor struct (incl. position_mm) and pixel<->mm mapping
     geometry.rs             Point and Rect types
+  gui/
+    mod.rs                  single-instance window guard, HWND show/hide,
+                            reload_active_profile (live-reload entry point)
+    app.rs                  eframe App, tab dispatch, window icon, HWND capture
+    autostart.rs            schtasks Create/Delete via ShellExecuteEx + runas
+    config_io.rs            toml_edit writer that preserves doc comments
+    tabs/
+      general.rs            backend radio, default diagonal, auto-start toggle
+      monitors.rs           drag-to-arrange canvas + numeric diagonal editor
+      bypass.rs             process-list editor (live-reload)
+      log.rs                tail of cursor_log.txt with auto-refresh
   platform/
     mod.rs                  cfg-gated platform selection
     windows.rs              Windows platform surface (re-exports)
     windows/
-      monitors.rs           monitor enumeration, DPI setup, build_monitor_map
+      monitors.rs           enumeration, HWID query, build_monitor_map (+ position seeding)
       interception.rs       Interception kernel-driver backend
       lowlevel.rs           WH_MOUSE_LL userspace backend
-      focus.rs              fullscreen-game and process-bypass detection
-      layout.rs             WM_DISPLAYCHANGE listener for hot-reload
-      tray.rs               system-tray icon and Win32 message pump
+      focus.rs              fullscreen-game detect + global BYPASS lookup
+      layout.rs             WM_DISPLAYCHANGE listener + trigger_monitor_rebuild
+      tray.rs               tray icon, menu (Settings.../Edit bypass.../Quit), pump
 ```
 
-Adding Linux support requires only a new `platform/linux/` implementation of the same public surface re-exported from `platform/windows.rs`. The remapper and core are unchanged.
+Adding Linux support requires only a new `platform/linux/` implementation of the same public surface re-exported from `platform/windows.rs`. The `gui/` tree is already cross-platform (egui + eframe); only the HWND-based show/hide and the schtasks autostart helper need Windows-specific replacements.
