@@ -172,10 +172,10 @@ pub fn size_for(hwid: Option<&str>) -> f32 {
     let Some(sizes) = guard.as_ref() else {
         return 27.0;
     };
-    if let Some(h) = hwid {
-        if let Some(e) = sizes.by_hwid.get(h) {
-            return e.size_in;
-        }
+    if let Some(h) = hwid
+        && let Some(e) = sizes.by_hwid.get(h)
+    {
+        return e.size_in;
     }
     sizes.default
 }
@@ -218,24 +218,6 @@ pub fn is_bypassed(basename: &str) -> bool {
         return false;
     };
     b.contains(basename)
-}
-
-/// Replace the runtime size + position for a HWID without touching disk.
-/// Used by the layout canvas to push every drag frame into the active SIZES
-/// lookup so cursor crossings reflect the new layout in real time; the GUI
-/// writes the disk entry once when the drag ends.
-pub fn override_hwid(hwid: &str, size_in: f32, position_mm: (f32, f32)) {
-    let mut guard = SIZES.write().expect("SIZES poisoned");
-    let Some(sizes) = guard.as_mut() else {
-        return;
-    };
-    sizes.by_hwid.insert(
-        hwid.to_string(),
-        HwidEntry {
-            size_in,
-            position_mm: Some(position_mm),
-        },
-    );
 }
 
 const DEFAULT_CONFIG: &str = indoc::indoc! {r#"

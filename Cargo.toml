@@ -7,6 +7,13 @@ edition = "2024"
 name = "RustCursor"
 path = "src/main.rs"
 
+[features]
+default = ["log"]
+# Enables the `cursor_log.txt` tail under %LOCALAPPDATA%\RustCursor. Disabled
+# release builds (`--no-default-features`) drop the file I/O and basename
+# resolution on the input-event hot path entirely.
+log = []
+
 [dependencies]
 interception = "0.1.2"
 tray-icon = "0.24"
@@ -16,8 +23,6 @@ toml = "0.8"
 toml_edit = "0.22"
 indoc = "2"
 eframe = { version = "0.29", default-features = false, features = ["glow", "default_fonts"] }
-winit = "0.30"
-raw-window-handle = "0.6"
 
 [dependencies.windows]
 version = ">=0.59, <=0.62"

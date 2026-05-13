@@ -281,7 +281,10 @@ mod tests {
         monitors.insert("dst".into(), dst);
 
         let (_, ty) = remap_transition(1919, 540, 1920, 540, &monitors).expect("crossing");
-        assert!(ty < 540, "expected landing above destination centre, got y={ty}");
+        assert!(
+            ty < 540,
+            "expected landing above destination centre, got y={ty}"
+        );
     }
 
     /// Tall portrait monitor at world (0, 0) -> ~600 mm tall; short landscape
@@ -324,10 +327,7 @@ mod tests {
         // landscape's world-y range [100, 436].
         let (tx, _ty) =
             remap_transition(1079, 600, 1080, 600, &monitors).expect("expected crossing");
-        assert!(
-            tx >= 1080,
-            "expected cursor on landscape, got x={tx}"
-        );
+        assert!(tx >= 1080, "expected cursor on landscape, got x={tx}");
     }
 
     #[test]

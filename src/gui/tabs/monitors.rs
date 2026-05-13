@@ -2,10 +2,10 @@
 //!
 //! The canvas at the top draws each connected monitor as a rectangle whose
 //! aspect ratio matches its physical mm dimensions. Dragging a rectangle
-//! updates that monitor's `position_mm` and, on every drag frame, pushes the
-//! new value into the runtime `SIZES` lookup plus triggers a monitor-map
-//! rebuild so cursor crossings reflect the layout immediately. The disk
-//! write happens once when the drag ends.
+//! updates that monitor's `position_mm` locally so the user sees the
+//! preview move. Disk write + IPC reload of the parent's cursor remap fires
+//! once when the drag ends (live during-drag updates aren't viable across
+//! the subprocess boundary).
 //!
 //! Snap-to-edge is applied during drag: the dragged monitor's edges snap to
 //! any other monitor's edges within 10 mm (touching candidates: left-to-right
@@ -116,11 +116,7 @@ impl MonitorsTab {
         ui.add_space(8.0);
 
         if self.rows.is_empty() {
-            ui.label(
-                egui::RichText::new("No monitors detected.")
-                    .small()
-                    .weak(),
-            );
+            ui.label(egui::RichText::new("No monitors detected.").small().weak());
             return;
         }
 
@@ -161,10 +157,8 @@ impl MonitorsTab {
     /// can write the position to disk.
     fn show_layout_canvas(&mut self, ui: &mut egui::Ui) -> Option<usize> {
         let canvas_w = ui.available_width();
-        let (canvas_rect, _) = ui.allocate_exact_size(
-            egui::vec2(canvas_w, CANVAS_PX_H),
-            egui::Sense::hover(),
-        );
+        let (canvas_rect, _) =
+            ui.allocate_exact_size(egui::vec2(canvas_w, CANVAS_PX_H), egui::Sense::hover());
 
         // Compute world bounds across all monitor rectangles.
         let mut min_x = f32::INFINITY;
@@ -189,16 +183,11 @@ impl MonitorsTab {
         let centre = canvas_rect.center();
         let half_world = egui::vec2(world_w * scale * 0.5, world_h * scale * 0.5);
         let world_origin = centre - half_world - egui::vec2(min_x * scale, min_y * scale);
-        let world_to_screen = |wx: f32, wy: f32| -> egui::Pos2 {
-            world_origin + egui::vec2(wx * scale, wy * scale)
-        };
+        let world_to_screen =
+            |wx: f32, wy: f32| -> egui::Pos2 { world_origin + egui::vec2(wx * scale, wy * scale) };
 
         let painter = ui.painter_at(canvas_rect);
-        painter.rect_filled(
-            canvas_rect,
-            4.0,
-            ui.style().visuals.extreme_bg_color,
-        );
+        painter.rect_filled(canvas_rect, 4.0, ui.style().visuals.extreme_bg_color);
 
         let alt_held = ui.input(|i| i.modifiers.alt);
         let mut drag_deltas: Vec<(usize, egui::Vec2)> = Vec::new();
@@ -249,13 +238,11 @@ impl MonitorsTab {
             if !alt_held {
                 apply_snap(&mut self.rows, idx);
             }
-            // Live-push to the runtime so cursor crossings reflect the drag
-            // immediately. Disk write happens once on drag end.
-            let r = &self.rows[idx];
-            if let Some(h) = r.hwid.as_deref() {
-                rust_cursor::config::override_hwid(h, r.size_in, r.position_mm);
-                crate::platform::windows::trigger_monitor_rebuild();
-            }
+            // No in-drag cross-process push: the parent's runtime SIZES are
+            // updated on drag-end via `save_position` → ConfigDoc write →
+            // `gui::reload_active_profile`, which posts the IPC reload signal.
+            // The canvas's drag preview is purely local (paints from
+            // `row.position_mm`), so the user still sees the rectangle move.
         }
 
         stopped
@@ -395,14 +382,14 @@ fn apply_snap(rows: &mut [MonitorRow], idx: usize) {
     let mut best_dx: Option<f32> = None;
     let mut best_dy: Option<f32> = None;
 
-    for j in 0..rows.len() {
+    for (j, other) in rows.iter().enumerate() {
         if j == idx {
             continue;
         }
-        let (o_w, o_h) = rows[j].size_mm();
-        let o_left = rows[j].position_mm.0;
+        let (o_w, o_h) = other.size_mm();
+        let o_left = other.position_mm.0;
         let o_right = o_left + o_w;
-        let o_top = rows[j].position_mm.1;
+        let o_top = other.position_mm.1;
         let o_bottom = o_top + o_h;
 
         for &(mine, theirs) in &[
@@ -412,7 +399,7 @@ fn apply_snap(rows: &mut [MonitorRow], idx: usize) {
             (my_right, o_right),
         ] {
             let delta = theirs - mine;
-            if delta.abs() <= SNAP_MM && best_dx.map_or(true, |b| delta.abs() < b.abs()) {
+            if delta.abs() <= SNAP_MM && best_dx.is_none_or(|b| delta.abs() < b.abs()) {
                 best_dx = Some(delta);
             }
         }
@@ -423,7 +410,7 @@ fn apply_snap(rows: &mut [MonitorRow], idx: usize) {
             (my_bottom, o_bottom),
         ] {
             let delta = theirs - mine;
-            if delta.abs() <= SNAP_MM && best_dy.map_or(true, |b| delta.abs() < b.abs()) {
+            if delta.abs() <= SNAP_MM && best_dy.is_none_or(|b| delta.abs() < b.abs()) {
                 best_dy = Some(delta);
             }
         }
@@ -436,4 +423,3 @@ fn apply_snap(rows: &mut [MonitorRow], idx: usize) {
         rows[idx].position_mm.1 += dy;
     }
 }
-

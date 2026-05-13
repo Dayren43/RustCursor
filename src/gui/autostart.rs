@@ -48,9 +48,7 @@ pub fn enable() -> Result<(), String> {
         .to_string_lossy()
         .into_owned();
     // Quote the exe path so spaces don't split the /TR argument.
-    let args = format!(
-        "/Create /TN {TASK_NAME} /SC ONLOGON /RL HIGHEST /TR \"\\\"{exe}\\\"\" /F"
-    );
+    let args = format!("/Create /TN {TASK_NAME} /SC ONLOGON /RL HIGHEST /TR \"\\\"{exe}\\\"\" /F");
     run_elevated("schtasks.exe", &args)
 }
 

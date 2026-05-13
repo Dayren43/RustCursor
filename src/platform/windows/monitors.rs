@@ -168,7 +168,11 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
             let diag_mm = size_in * 25.4;
             let h_mm = diag_mm / ((aspect * aspect + 1.0).sqrt());
             let w_mm = h_mm * aspect;
-            Tmp { info: m, size_in, w_mm }
+            Tmp {
+                info: m,
+                size_in,
+                w_mm,
+            }
         })
         .collect();
     tmps.sort_by_key(|t| t.info.rect.left);

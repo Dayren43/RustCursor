@@ -9,9 +9,6 @@
 //! steady state; we keep it for safety regardless.
 
 use std::collections::HashMap;
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
@@ -22,21 +19,23 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use rust_cursor::core::Monitor;
-use rust_cursor::remapper::{monitor_at_pixel, remap_transition};
+#[cfg(feature = "log")]
+use rust_cursor::remapper::monitor_at_pixel;
+use rust_cursor::remapper::remap_transition;
 
 use super::focus::FocusGuard;
 
 struct State {
     monitors: Arc<RwLock<HashMap<String, Monitor>>>,
     focus: FocusGuard,
-    log: std::fs::File,
+    #[cfg(feature = "log")]
+    log: std::io::BufWriter<std::fs::File>,
     prev_pt: POINT,
 }
 
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 
 pub fn run_lowlevel_loop(monitors: Arc<RwLock<HashMap<String, Monitor>>>) {
-    let log = open_log();
     let mut prev_pt = POINT::default();
     unsafe {
         let _ = GetCursorPos(&mut prev_pt);
@@ -45,7 +44,8 @@ pub fn run_lowlevel_loop(monitors: Arc<RwLock<HashMap<String, Monitor>>>) {
     let state = State {
         monitors,
         focus: FocusGuard::new(),
-        log,
+        #[cfg(feature = "log")]
+        log: open_log(),
         prev_pt,
     };
 
@@ -54,6 +54,7 @@ pub fn run_lowlevel_loop(monitors: Arc<RwLock<HashMap<String, Monitor>>>) {
         return;
     }
 
+    #[cfg(feature = "log")]
     write_session_header();
 
     let hook = unsafe {
@@ -114,19 +115,30 @@ unsafe extern "system" fn ll_callback(n_code: i32, w_param: WPARAM, l_param: LPA
         return pass_through();
     };
 
-    let tag = {
-        let src = monitor_at_pixel(old_pt.x, old_pt.y, &map).map(|m| &m.identifier);
-        let dst = monitor_at_pixel(cx, cy, &map).map(|m| &m.identifier);
-        if src != dst { "REMAP" } else { "BLOCK" }
-    };
+    #[cfg(feature = "log")]
+    {
+        // BLOCK lines (cursor pinned within its source monitor) are noisy edge-
+        // glide spam at the input polling rate; only log genuine REMAPs.
+        let is_remap = {
+            let src = monitor_at_pixel(old_pt.x, old_pt.y, &map).map(|m| &m.identifier);
+            let dst = monitor_at_pixel(cx, cy, &map).map(|m| &m.identifier);
+            src != dst
+        };
+        if is_remap {
+            use std::io::Write;
+            // Split-borrow through the guard so writing to `log` and reading
+            // `focus.current_basename()` (which borrows `focus`) don't alias.
+            let s = &mut *state;
+            let process = s.focus.current_basename().unwrap_or("?");
+            let _ = writeln!(
+                s.log,
+                "REMAP  ({},{}) → ({},{})  [raw ({},{})]  [{}]",
+                old_pt.x, old_pt.y, cx, cy, new_pt.x, new_pt.y, process
+            );
+            let _ = s.log.flush();
+        }
+    }
     drop(map);
-    let process = state.focus.current_basename().unwrap_or("?").to_owned();
-
-    let _ = writeln!(
-        state.log,
-        "{}  ({},{}) → ({},{})  [raw ({},{})]  [{}]",
-        tag, old_pt.x, old_pt.y, cx, cy, new_pt.x, new_pt.y, process
-    );
 
     // Remember the corrected position so the next stroke's old_pt reflects
     // where we actually put the cursor, not the OS's pre-correction reading.
@@ -139,7 +151,9 @@ unsafe extern "system" fn ll_callback(n_code: i32, w_param: WPARAM, l_param: LPA
     LRESULT(1) // suppress original event
 }
 
+#[cfg(feature = "log")]
 fn write_session_header() {
+    use std::io::Write;
     let Some(mutex) = STATE.get() else { return };
     let mut s = mutex.lock().unwrap();
     let _ = writeln!(s.log, "=== session start (lowlevel backend) ===");
@@ -168,17 +182,22 @@ fn write_session_header() {
     let _ = writeln!(s.log, "----------------------");
     let (sx, sy) = (s.prev_pt.x, s.prev_pt.y);
     let _ = writeln!(s.log, "start ({}, {})", sx, sy);
+    let _ = s.log.flush();
 }
 
-fn open_log() -> std::fs::File {
+#[cfg(feature = "log")]
+fn open_log() -> std::io::BufWriter<std::fs::File> {
+    use std::fs::OpenOptions;
+    use std::path::PathBuf;
     let log_dir = std::env::var_os("LOCALAPPDATA")
         .map(|s| PathBuf::from(s).join("RustCursor"))
         .unwrap_or_else(|| PathBuf::from("."));
     let _ = std::fs::create_dir_all(&log_dir);
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(log_dir.join("cursor_log.txt"))
-        .expect("Could not open cursor_log.txt")
+        .expect("Could not open cursor_log.txt");
+    std::io::BufWriter::new(file)
 }

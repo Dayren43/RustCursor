@@ -72,11 +72,7 @@ impl LogTab {
         });
 
         if let Some(p) = log_path() {
-            ui.label(
-                egui::RichText::new(p.display().to_string())
-                    .small()
-                    .weak(),
-            );
+            ui.label(egui::RichText::new(p.display().to_string()).small().weak());
         }
         ui.add_space(6.0);
 

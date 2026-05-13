@@ -50,7 +50,7 @@ pub fn run_tray_loop(backend: rust_cursor::config::Backend) {
         if event.id == quit_id {
             unsafe { PostQuitMessage(0) };
         } else if event.id == settings_id {
-            crate::gui::open_settings_window();
+            crate::gui::spawn_settings_subprocess();
         } else if event.id == edit_id {
             open_config_in_editor();
         }

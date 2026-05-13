@@ -11,6 +11,7 @@
 //!     HWND) and matched case-insensitively.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
 use windows::Win32::System::StationsAndDesktops::{
@@ -23,9 +24,19 @@ use windows::Win32::UI::Shell::{QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotific
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 use windows::core::PWSTR;
 
+/// How long a `should_skip_remap` decision is cached before re-running the
+/// underlying syscalls. The hook callback fires on every mouse event (up to
+/// the polling rate, ~1000 Hz), and the three syscalls inside the slow path
+/// (OpenInputDesktop, GetForegroundWindow, SHQueryUserNotificationState) cost
+/// far more than the remap math itself. 50 ms means at most ~20 slow paths
+/// per second instead of ~1000; the foreground app and UAC state cannot
+/// change meaningfully faster than that for our purposes.
+const SKIP_CACHE_TTL: Duration = Duration::from_millis(50);
+
 pub struct FocusGuard {
     last_hwnd: isize,
     last_basename: Option<String>,
+    cached_skip: Option<(Instant, bool)>,
 }
 
 impl FocusGuard {
@@ -33,6 +44,7 @@ impl FocusGuard {
         Self {
             last_hwnd: 0,
             last_basename: None,
+            cached_skip: None,
         }
     }
 
@@ -41,7 +53,21 @@ impl FocusGuard {
     /// the foreground). The bypass list is read from the global
     /// `config::is_bypassed` lookup each call so the GUI's Bypass tab can
     /// swap it live without a RustCursor restart.
+    ///
+    /// Cached for `SKIP_CACHE_TTL` to keep the per-event cost low; see the
+    /// constant doc for the trade-off.
     pub fn should_skip_remap(&mut self) -> bool {
+        if let Some((when, decision)) = self.cached_skip
+            && when.elapsed() < SKIP_CACHE_TTL
+        {
+            return decision;
+        }
+        let decision = self.compute_skip_remap();
+        self.cached_skip = Some((Instant::now(), decision));
+        decision
+    }
+
+    fn compute_skip_remap(&mut self) -> bool {
         // UAC's consent prompt runs on a separate "secure desktop" our process
         // can't reach. While it owns input, OpenInputDesktop fails for
         // non-winlogon callers. Use that as the signal to step fully aside,
@@ -76,6 +102,8 @@ impl FocusGuard {
     /// Cached basename of the foreground window's process. Populated by
     /// `should_skip_remap`; used by the event loop for diagnostic logging
     /// so a misbehaving app can be added to `bypass_processes` by name.
+    /// Only consumed when the `log` feature is enabled.
+    #[cfg(feature = "log")]
     pub fn current_basename(&self) -> Option<&str> {
         self.last_basename.as_deref()
     }

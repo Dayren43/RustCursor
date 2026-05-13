@@ -58,10 +58,7 @@ impl BypassTab {
             }
         });
         if let Some(name) = to_add {
-            let already = self
-                .entries
-                .iter()
-                .any(|e| e.eq_ignore_ascii_case(&name));
+            let already = self.entries.iter().any(|e| e.eq_ignore_ascii_case(&name));
             if !already {
                 self.entries.push(name);
                 self.save();
@@ -83,14 +80,11 @@ impl BypassTab {
                 for (i, entry) in self.entries.iter().enumerate() {
                     ui.horizontal(|ui| {
                         ui.label(entry);
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if ui.button("Remove").clicked() {
-                                    remove_idx = Some(i);
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("Remove").clicked() {
+                                remove_idx = Some(i);
+                            }
+                        });
                     });
                     ui.separator();
                 }
@@ -116,9 +110,9 @@ impl BypassTab {
         match result {
             Ok(()) => {
                 self.last_error = None;
-                // Hot-swap the runtime bypass lookup so the input loop's next
-                // focus check uses the new list.
-                rust_cursor::config::install_bypass_processes(self.entries.clone());
+                // Re-install BYPASS locally and signal the parent process so
+                // its input loop's next focus check sees the new list.
+                crate::gui::reload_active_profile();
             }
             Err(e) => self.last_error = Some(e),
         }
