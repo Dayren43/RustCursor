@@ -25,11 +25,7 @@ pub(crate) fn reload_active_profile() {
         .active_profile(&hwids)
         .map(|p| p.monitors.clone())
         .unwrap_or_default();
-    rust_cursor::config::install_active_profile(
-        profile_monitors,
-        cfg.legacy_monitors.clone(),
-        cfg.default_size_in,
-    );
+    rust_cursor::config::install_active_profile(profile_monitors, cfg.default_size_in);
     crate::platform::windows::trigger_monitor_rebuild();
 }
 

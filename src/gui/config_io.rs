@@ -54,30 +54,6 @@ impl ConfigDoc {
         self.doc["bypass_processes"] = value(arr);
     }
 
-    /// Legacy: upsert a `[[monitor]]` entry for `device`. Kept as a fallback
-    /// for monitors that report no HWID; the GUI prefers `upsert_profile_monitor`
-    /// when one is available.
-    pub fn set_monitor_size(&mut self, device: &str, size_in: f32) {
-        if !matches!(self.doc.get("monitor"), Some(Item::ArrayOfTables(_))) {
-            self.doc["monitor"] = Item::ArrayOfTables(ArrayOfTables::new());
-        }
-        let aot = self.doc["monitor"]
-            .as_array_of_tables_mut()
-            .expect("monitor key is array of tables");
-
-        for tbl in aot.iter_mut() {
-            if tbl.get("device").and_then(|i| i.as_str()) == Some(device) {
-                tbl["size_in"] = value(size_in as f64);
-                return;
-            }
-        }
-
-        let mut tbl = Table::new();
-        tbl["device"] = value(device);
-        tbl["size_in"] = value(size_in as f64);
-        aot.push(tbl);
-    }
-
     /// Upsert a `[[profile.monitor]]` entry inside the profile keyed by
     /// `profile_hwids`. Creates the profile if no existing one has a matching
     /// HWID set (order-independent). `description` is written/refreshed on

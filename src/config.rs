@@ -23,15 +23,6 @@ pub enum Backend {
     Lowlevel,
 }
 
-/// Legacy per-monitor entry keyed by Windows OS slot (e.g. `\\.\DISPLAY1`).
-/// Still read for backward compatibility with configs written before
-/// `[[profile]]` existed; new writes from the GUI go to profiles instead.
-#[derive(Debug, Default, Clone, Deserialize)]
-pub struct MonitorEntry {
-    pub device: String,
-    pub size_in: f32,
-}
-
 /// Per-monitor entry inside a `[[profile.monitor]]` array. Keyed by stable
 /// HWID rather than OS slot so cable swaps and port changes don't re-trigger
 /// first-time setup.
@@ -78,11 +69,6 @@ pub struct Config {
     /// connected HWID set is selected at startup.
     #[serde(default, rename = "profile")]
     pub profiles: Vec<Profile>,
-
-    /// Legacy device-keyed overrides. Read but never re-written; the GUI
-    /// migrates these into a profile the first time the user edits a value.
-    #[serde(default, rename = "monitor")]
-    pub legacy_monitors: Vec<MonitorEntry>,
 }
 
 impl Default for Config {
@@ -92,7 +78,6 @@ impl Default for Config {
             bypass_processes: Vec::new(),
             default_size_in: default_size_in(),
             profiles: Vec::new(),
-            legacy_monitors: Vec::new(),
         }
     }
 }
@@ -145,8 +130,8 @@ pub fn path() -> Option<PathBuf> {
 // ── Active-sizes lookup ────────────────────────────────────────────────────
 // Installed once at startup; consulted by `build_monitor_map` (initial
 // enumeration) and by the WM_DISPLAYCHANGE handler (rebuild on layout change).
-// HWID-keyed lookup takes precedence; legacy device-keyed entries are the
-// fallback for unmigrated configs.
+// Keyed by stable HWID; `default` covers any connected monitor not in the
+// active profile (or any monitor whose adapter doesn't expose a HWID).
 
 struct HwidEntry {
     size_in: f32,
@@ -155,21 +140,15 @@ struct HwidEntry {
 
 struct ActiveSizes {
     by_hwid: HashMap<String, HwidEntry>,
-    by_device: HashMap<String, f32>,
     default: f32,
 }
 
 static SIZES: RwLock<Option<ActiveSizes>> = RwLock::new(None);
 
 /// Install (or replace) the per-monitor size and position lookup from a
-/// resolved active profile plus the legacy device-keyed list (used as a
-/// size-only fallback). Called once at startup and then again from the GUI
+/// resolved active profile. Called once at startup and again from the GUI
 /// after every successful save so live edits show up without a restart.
-pub fn install_active_profile(
-    profile_monitors: Vec<ProfileMonitor>,
-    legacy_monitors: Vec<MonitorEntry>,
-    default: f32,
-) {
+pub fn install_active_profile(profile_monitors: Vec<ProfileMonitor>, default: f32) {
     let by_hwid = profile_monitors
         .into_iter()
         .map(|m| {
@@ -182,22 +161,13 @@ pub fn install_active_profile(
             )
         })
         .collect();
-    let by_device = legacy_monitors
-        .into_iter()
-        .map(|m| (m.device, m.size_in))
-        .collect();
-    *SIZES.write().expect("SIZES poisoned") = Some(ActiveSizes {
-        by_hwid,
-        by_device,
-        default,
-    });
+    *SIZES.write().expect("SIZES poisoned") = Some(ActiveSizes { by_hwid, default });
 }
 
-/// Diagonal size in inches for a monitor identified by OS slot and (when
-/// available) stable HWID. HWID match wins; legacy device-name match is the
-/// fallback; finally `default_size_in` (or the hard 27.0 fallback if
-/// `install_active_profile` was never called).
-pub fn size_for(device: &str, hwid: Option<&str>) -> f32 {
+/// Diagonal size in inches for a monitor identified by stable HWID. Returns
+/// `default_size_in` (or the hard 27.0 fallback if `install_active_profile`
+/// was never called) when no HWID match exists.
+pub fn size_for(hwid: Option<&str>) -> f32 {
     let guard = SIZES.read().expect("SIZES poisoned");
     let Some(sizes) = guard.as_ref() else {
         return 27.0;
@@ -207,17 +177,13 @@ pub fn size_for(device: &str, hwid: Option<&str>) -> f32 {
             return e.size_in;
         }
     }
-    sizes
-        .by_device
-        .get(device)
-        .copied()
-        .unwrap_or(sizes.default)
+    sizes.default
 }
 
 /// Physical top-left in shared millimetre coordinates for a monitor, if the
 /// active profile pins one. `None` means the caller should fall back to the
 /// runtime default (left-to-right cumulative-width seeding).
-pub fn position_for(_device: &str, hwid: Option<&str>) -> Option<(f32, f32)> {
+pub fn position_for(hwid: Option<&str>) -> Option<(f32, f32)> {
     let guard = SIZES.read().expect("SIZES poisoned");
     let sizes = guard.as_ref()?;
     let h = hwid?;
@@ -272,47 +238,46 @@ pub fn override_hwid(hwid: &str, size_in: f32, position_mm: (f32, f32)) {
     );
 }
 
-//TODO replace with the nicer macro indoc!, indoc = "2.0.4"
-const DEFAULT_CONFIG: &str = "\
-# RustCursor config: %LOCALAPPDATA%\\RustCursor\\config.toml
-# Restart RustCursor after editing.
+const DEFAULT_CONFIG: &str = indoc::indoc! {r#"
+    # RustCursor config: %LOCALAPPDATA%\RustCursor\config.toml
+    # Restart RustCursor after editing.
 
-# Mouse-input backend.
-#   \"lowlevel\"     : user-mode WH_MOUSE_LL hook. AC-compatible, no driver
-#                    needed, brief snap visible on monitor crossings. (default)
-#   \"interception\" : kernel driver, no snap artifact, but blocked by kernel
-#                    anti-cheats (Vanguard, Javelin, kernel-mode EAC). Requires
-#                    the Interception driver to be installed.
-backend = \"lowlevel\"
+    # Mouse-input backend.
+    #   "lowlevel"     : user-mode WH_MOUSE_LL hook. AC-compatible, no driver
+    #                    needed, brief snap visible on monitor crossings. (default)
+    #   "interception" : kernel driver, no snap artifact, but blocked by kernel
+    #                    anti-cheats (Vanguard, Javelin, kernel-mode EAC). Requires
+    #                    the Interception driver to be installed.
+    backend = "lowlevel"
 
-# Foreground processes that pause cursor remapping while focused.
-# Use executable basenames (with .exe), case-insensitive.
-#
-# Fullscreen DirectX/Vulkan/OpenGL games are auto-detected via
-# SHQueryUserNotificationState; only list a game here if it isn't
-# being detected automatically (e.g. windowed-fullscreen titles).
-bypass_processes = []
+    # Foreground processes that pause cursor remapping while focused.
+    # Use executable basenames (with .exe), case-insensitive.
+    #
+    # Fullscreen DirectX/Vulkan/OpenGL games are auto-detected via
+    # SHQueryUserNotificationState; only list a game here if it isn't
+    # being detected automatically (e.g. windowed-fullscreen titles).
+    bypass_processes = []
 
-# Default physical monitor diagonal size in inches. Used when no [[profile]]
-# matches the currently connected monitors, or a connected monitor has no
-# per-HWID entry.
-default_size_in = 27.0
+    # Default physical monitor diagonal size in inches. Used when no [[profile]]
+    # matches the currently connected monitors, or a connected monitor has no
+    # per-HWID entry.
+    default_size_in = 27.0
 
-# Per-display-set layouts. A profile applies when its `hwids` set equals the
-# currently connected monitors' set (order-independent). The Settings GUI
-# writes profiles automatically; you usually do not need to edit by hand.
-#
-# [[profile]]
-# hwids = [\"MONITOR\\\\DEL41B7\", \"MONITOR\\\\GSM5BAF\"]
-# description = \"Dell 27 + LG 27\"
-#
-# [[profile.monitor]]
-# hwid        = \"MONITOR\\\\DEL41B7\"
-# size_in     = 27.0
-# position_mm = [0.0, 0.0]
-#
-# [[profile.monitor]]
-# hwid        = \"MONITOR\\\\GSM5BAF\"
-# size_in     = 27.0
-# position_mm = [600.0, 0.0]
-";
+    # Per-display-set layouts. A profile applies when its `hwids` set equals the
+    # currently connected monitors' set (order-independent). The Settings GUI
+    # writes profiles automatically; you usually do not need to edit by hand.
+    #
+    # [[profile]]
+    # hwids = ["MONITOR\\DEL41B7", "MONITOR\\GSM5BAF"]
+    # description = "Dell 27 + LG 27"
+    #
+    # [[profile.monitor]]
+    # hwid        = "MONITOR\\DEL41B7"
+    # size_in     = 27.0
+    # position_mm = [0.0, 0.0]
+    #
+    # [[profile.monitor]]
+    # hwid        = "MONITOR\\GSM5BAF"
+    # size_in     = 27.0
+    # position_mm = [600.0, 0.0]
+"#};

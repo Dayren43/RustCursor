@@ -77,18 +77,6 @@ size_in     = 24.0
 
 HWIDs are read from the EDID manufacturer + product code via `EnumDisplayDevices`; find yours in the Settings GUI's Monitors tab or look up the device instance ID under `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY` in the registry. Restart RustCursor after editing.
 
-### Legacy device-name overrides
-
-Configs written before profiles existed used `[[monitor]]` entries keyed by Windows' OS slot (`\\.\DISPLAYx`):
-
-```toml
-[[monitor]]
-device  = '\\.\DISPLAY1'
-size_in = 27.0
-```
-
-These are still read as a fallback for any monitor that has no matching `[[profile.monitor]]` entry, so existing configs keep working. The Settings GUI does not write this form for new entries.
-
 ### Identical-model limitation
 
 Two monitors of the exact same make and model share an HWID prefix (e.g. both report `MONITOR\DEL41B7`), so a setup with two identical panels cannot tell them apart by HWID alone. The planned fix is to additionally parse the EDID serial number from `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\<MMMPPPP>\<instance>\Device Parameters\EDID` and append it to the HWID string. The on-disk schema does not change when this lands; HWID just becomes more specific.

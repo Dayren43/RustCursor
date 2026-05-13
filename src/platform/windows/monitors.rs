@@ -157,7 +157,7 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
     let mut tmps: Vec<Tmp> = enumerate_monitors()
         .into_iter()
         .map(|m| {
-            let size_in = rust_cursor::config::size_for(&m.name, m.hwid.as_deref());
+            let size_in = rust_cursor::config::size_for(m.hwid.as_deref());
             let w_px = (m.rect.right - m.rect.left) as f32;
             let h_px = (m.rect.bottom - m.rect.top) as f32;
             let aspect = if h_px.abs() < f32::EPSILON {
@@ -182,7 +182,7 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
 
     let mut map = HashMap::new();
     for t in tmps {
-        let pos = rust_cursor::config::position_for(&t.info.name, t.info.hwid.as_deref())
+        let pos = rust_cursor::config::position_for(t.info.hwid.as_deref())
             .unwrap_or_else(|| defaults[&t.info.name]);
         let pixels_w = (t.info.rect.right - t.info.rect.left) as u32;
         let pixels_h = (t.info.rect.bottom - t.info.rect.top) as u32;

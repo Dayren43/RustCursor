@@ -19,8 +19,9 @@
 //! Both paths call `gui::reload_active_profile` so changes apply live.
 //!
 //! Writes go to `[[profile.monitor]]` entries keyed by stable HWID. Rows for
-//! monitors that don't expose a HWID fall back to legacy `[[monitor]]`
-//! entries (size only) and are skipped in the canvas drag path.
+//! monitors that don't expose a HWID can't be persisted (size or position);
+//! the canvas drag path skips them and the size editor shows a "no hardware
+//! ID" note in place of the HWID line.
 
 use eframe::egui;
 
@@ -288,7 +289,7 @@ impl MonitorsTab {
                         ui.label(egui::RichText::new(h).small().weak());
                     } else {
                         ui.label(
-                            egui::RichText::new("(no hardware ID; saved by OS slot)")
+                            egui::RichText::new("(no hardware ID; edits can't be persisted)")
                                 .small()
                                 .weak(),
                         );
@@ -312,7 +313,9 @@ impl MonitorsTab {
             }
 
             for (device, hwid, size) in size_saves {
-                self.save_size(&connected_hwids, &description, &device, hwid.as_deref(), size);
+                if let Some(h) = hwid {
+                    self.save_size(&connected_hwids, &description, &device, &h, size);
+                }
             }
         });
     }
@@ -322,15 +325,12 @@ impl MonitorsTab {
         profile_hwids: &[String],
         description: &str,
         device: &str,
-        hwid: Option<&str>,
+        hwid: &str,
         size_in: f32,
     ) {
         let result = (|| -> Result<(), String> {
             let mut doc = ConfigDoc::load()?;
-            match hwid {
-                Some(h) => doc.upsert_profile_monitor(profile_hwids, h, size_in, None, description),
-                None => doc.set_monitor_size(device, size_in),
-            }
+            doc.upsert_profile_monitor(profile_hwids, hwid, size_in, None, description);
             doc.save()
         })();
         match result {
@@ -349,7 +349,7 @@ impl MonitorsTab {
 
     fn save_position(&mut self, idx: usize) {
         let Some(hwid) = self.rows[idx].hwid.clone() else {
-            // No HWID -> no profile entry; legacy entries are size-only.
+            // No HWID -> can't persist; row stays edited in-memory only.
             return;
         };
         let pos = self.rows[idx].position_mm;
