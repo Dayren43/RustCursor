@@ -1,0 +1,38 @@
+name: Sync main into develop
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  sync:
+    name: Open sync PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if develop is behind main
+        id: check
+        shell: bash
+        run: |
+          git fetch origin main develop
+          BEHIND=$(git rev-list --count origin/develop..origin/main)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+
+      - name: Open sync PR
+        if: steps.check.outputs.behind != '0'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base develop \
+            --head main \
+            --title "chore: sync main into develop" \
+            --body "Automated sync of main into develop after a release." \
+            || echo "PR already exists, skipping."
