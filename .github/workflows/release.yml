@@ -1,20 +1,20 @@
 name: Release
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 jobs:
   release:
     name: Bump version, tag, and publish
-    if: >
-      github.event.pull_request.merged == true &&
-      (
-        contains(github.event.pull_request.labels.*.name, 'patch') ||
-        contains(github.event.pull_request.labels.*.name, 'minor') ||
-        contains(github.event.pull_request.labels.*.name, 'major')
-      )
     runs-on: windows-latest
     permissions:
       contents: write
@@ -22,22 +22,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: develop
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
-
-      - name: Determine bump type
-        id: label
-        shell: bash
-        run: |
-          LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
-          if echo "$LABELS" | grep -q '"major"'; then
-            echo "bump=major" >> $GITHUB_OUTPUT
-          elif echo "$LABELS" | grep -q '"minor"'; then
-            echo "bump=minor" >> $GITHUB_OUTPUT
-          else
-            echo "bump=patch" >> $GITHUB_OUTPUT
-          fi
 
       - name: Bump version in Cargo.toml
         id: version
@@ -45,7 +32,7 @@ jobs:
         run: |
           VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          BUMP="${{ steps.label.outputs.bump }}"
+          BUMP="${{ inputs.bump }}"
           if [[ "$BUMP" == "major" ]]; then
             MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
           elif [[ "$BUMP" == "minor" ]]; then
@@ -58,19 +45,23 @@ jobs:
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Bumped $VERSION -> $NEW_VERSION ($BUMP)"
 
-      - name: Commit and tag
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Sync Cargo.lock with new version
+        run: cargo update -p rust_cursor
+
+      - name: Commit, tag, push develop, fast-forward main
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml
+          git add Cargo.toml Cargo.lock
           git commit -m "chore: release v${{ steps.version.outputs.version }}"
           git tag -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
-          git push origin main
+          git push origin develop
           git push origin "v${{ steps.version.outputs.version }}"
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+          git push origin develop:main
 
       - name: Build release binary
         run: cargo build --release --no-default-features
@@ -82,18 +73,3 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           files: target/release/RustCursor.exe
           generate_release_notes: true
-
-      - name: Sync develop with main
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if git push origin main:develop; then
-            echo "develop fast-forwarded to main"
-          else
-            echo "develop has diverged, opening sync PR"
-            gh pr create --base develop --head main \
-              --title "chore: sync main into develop" \
-              --body "Automated sync after release (develop had concurrent commits)." \
-              || echo "PR already exists"
-          fi
