@@ -19,6 +19,10 @@ fn main() {
         return;
     }
 
+    if env::var("CARGO_FEATURE_INTERCEPTION_BACKEND").is_err() {
+        return;
+    }
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let vendored = manifest_dir.join("vendor").join("interception.dll");
 

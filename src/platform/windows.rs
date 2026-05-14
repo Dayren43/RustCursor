@@ -2,12 +2,14 @@
 //! Windows runtime; `main.rs` calls only the items re-exported here.
 
 mod focus;
+#[cfg(feature = "interception-backend")]
 mod interception;
 mod layout;
 mod lowlevel;
 mod monitors;
 mod tray;
 
+#[cfg(feature = "interception-backend")]
 pub use interception::run_interception_loop;
 pub use layout::register_display_listener;
 pub use lowlevel::run_lowlevel_loop;

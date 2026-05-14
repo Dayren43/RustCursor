@@ -15,6 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// user can tell at a glance which backend is active.
 pub fn run_tray_loop(backend: rust_cursor::config::Backend) {
     let backend_label = match backend {
+        #[cfg(feature = "interception-backend")]
         rust_cursor::config::Backend::Interception => "Backend: interception",
         rust_cursor::config::Backend::Lowlevel => "Backend: lowlevel",
     };
