@@ -17,6 +17,7 @@ use serde::Deserialize;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
+    #[cfg(feature = "interception-backend")]
     Interception,
     #[default]
     #[serde(alias = "lowlevel_hook", alias = "ll")]

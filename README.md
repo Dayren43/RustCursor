@@ -27,14 +27,21 @@ install-interception.exe /install
 
 ## Build and run
 
+Default build (lowlevel backend only, no external dependencies):
 ```
-cargo build --release
+cargo build --release --no-default-features
+.\target\release\RustCursor.exe
+```
+
+To include the interception backend (requires the driver and DLL, see [Backends](#backends)):
+```
+cargo build --release --features interception-backend
 .\target\release\RustCursor.exe
 ```
 
 The app runs silently with no console window. A tray icon appears in the notification area; right-click it for **Settings…** and **Quit RustCursor**. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
 
-For the `interception` backend, `interception.dll` must sit next to the exe at runtime. The DLL is not redistributed by the `interception-sys` crate or installed by the driver; it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe automatically; provide it via either of:
+When building with `--features interception-backend`, `interception.dll` must sit next to the exe at runtime. The DLL is not redistributed by the `interception-sys` crate or installed by the driver; it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe automatically; provide it via either of:
 
 - A copy at `vendor/interception.dll` in the repo root (gitignored), or
 - The `INTERCEPTION_DLL` environment variable pointing at the absolute path.
@@ -61,7 +68,7 @@ For windowed-fullscreen titles that aren't auto-detected, add their executable b
 Set `backend` in `config.toml`:
 
 - **`lowlevel`** *(default)*: user-mode `WH_MOUSE_LL` hook. No driver needed, compatible with kernel anti-cheats (Vanguard, Javelin, kernel-mode EAC). A brief snap is visible at each monitor crossing.
-- **`interception`**: kernel-driver path via [Interception](https://github.com/oblitum/Interception). No snap artifact, but flagged by kernel anti-cheats. Requires the Interception driver to be installed.
+- **`interception`**: kernel-driver path via [Interception](https://github.com/oblitum/Interception). No snap artifact, but flagged by kernel anti-cheats. Requires the Interception driver to be installed and a build with `--features interception-backend`. The pre-built release exe uses lowlevel only.
 
 Switching backends requires restarting RustCursor. The currently active backend is shown as the first item in the tray menu and on the General tab of the Settings window.
 
@@ -114,7 +121,7 @@ Smoke-test without rebooting: `schtasks /Run /TN "RustCursor"`. Remove with `sch
 ## Module layout
 
 ```
-build.rs                    copies interception.dll next to the built exe
+build.rs                    copies interception.dll next to the built exe (interception-backend feature only)
 assets/
   rustcursor-icon.png       embedded in the exe; used for tray + Settings window
   rustcursor-icon.svg       source vector

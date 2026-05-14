@@ -60,6 +60,7 @@ fn main() {
     let backend = config.backend;
     let backend_monitors = monitors.clone();
     std::thread::spawn(move || match backend {
+        #[cfg(feature = "interception-backend")]
         rust_cursor::config::Backend::Interception => {
             platform::windows::run_interception_loop(backend_monitors);
         }

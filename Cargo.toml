@@ -9,13 +9,17 @@ path = "src/main.rs"
 
 [features]
 default = ["log"]
-# Enables the `cursor_log.txt` tail under %LOCALAPPDATA%\RustCursor. Disabled
-# release builds (`--no-default-features`) drop the file I/O and basename
+# Enables the `cursor_log.txt` tail under %LOCALAPPDATA%\RustCursor. Disabled in
+# release builds (`--no-default-features`) to drop the file I/O and basename
 # resolution on the input-event hot path entirely.
 log = []
+# Enables the Interception kernel-driver backend. Requires the Interception
+# driver and DLL to be present. Omitted from release builds so the bare exe
+# runs on lowlevel without needing interception.dll.
+interception-backend = ["dep:interception"]
 
 [dependencies]
-interception = "0.1.2"
+interception = { version = "0.1.2", optional = true }
 tray-icon = "0.24"
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }

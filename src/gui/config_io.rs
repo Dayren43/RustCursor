@@ -35,6 +35,7 @@ impl ConfigDoc {
     pub fn set_backend(&mut self, backend: Backend) {
         let s = match backend {
             Backend::Lowlevel => "lowlevel",
+            #[cfg(feature = "interception-backend")]
             Backend::Interception => "interception",
         };
         self.doc["backend"] = value(s);

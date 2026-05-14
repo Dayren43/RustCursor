@@ -64,6 +64,7 @@ impl GeneralTab {
         let prev_backend = self.backend;
         ui.horizontal(|ui| {
             ui.radio_value(&mut self.backend, Backend::Lowlevel, "lowlevel");
+            #[cfg(feature = "interception-backend")]
             ui.radio_value(&mut self.backend, Backend::Interception, "interception");
         });
         ui.label(
@@ -71,6 +72,7 @@ impl GeneralTab {
                 Backend::Lowlevel => {
                     "User-mode WH_MOUSE_LL hook. AC-compatible, brief snap on crossings."
                 }
+                #[cfg(feature = "interception-backend")]
                 Backend::Interception => {
                     "Kernel driver. No snap artifact, blocked by kernel anti-cheats."
                 }
