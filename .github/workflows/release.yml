@@ -82,3 +82,18 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           files: target/release/RustCursor.exe
           generate_release_notes: true
+
+      - name: Sync develop with main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if git push origin main:develop; then
+            echo "develop fast-forwarded to main"
+          else
+            echo "develop has diverged, opening sync PR"
+            gh pr create --base develop --head main \
+              --title "chore: sync main into develop" \
+              --body "Automated sync after release (develop had concurrent commits)." \
+              || echo "PR already exists"
+          fi
