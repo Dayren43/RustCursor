@@ -32,7 +32,7 @@ cargo build --release
 .\target\release\RustCursor.exe
 ```
 
-The app runs silently with no console window. A tray icon appears in the notification area; right-click it for **Settings…**, **Edit bypass list…**, and **Quit RustCursor**. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
+The app runs silently with no console window. A tray icon appears in the notification area; right-click it for **Settings…** and **Quit RustCursor**. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
 
 For the `interception` backend, `interception.dll` must sit next to the exe at runtime. The DLL is not redistributed by the `interception-sys` crate or installed by the driver; it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe automatically; provide it via either of:
 
@@ -54,7 +54,7 @@ Backend changes still require a restart because the input loop thread captures t
 
 While focused on a fullscreen DirectX/Vulkan/OpenGL app, RustCursor automatically forwards strokes unchanged so games can keep cursor capture. Detection uses Windows' own `SHQueryUserNotificationState`, the same signal used to suppress toast notifications during gameplay, so F11 browsers, fullscreen video, and PowerPoint slideshows are *not* paused.
 
-For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list. The Settings GUI's **Bypass** tab is the easiest way; the underlying file is `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run) and the tray's **Edit bypass list…** item opens it in the default editor. Either path hot-reloads, no restart required.
+For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list via the Settings GUI's **Bypass** tab. The underlying file is `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run); hand-edits hot-reload, no restart required.
 
 ## Backends
 
