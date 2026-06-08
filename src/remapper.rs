@@ -21,6 +21,16 @@ pub fn monitor_for_x(x: i32, monitors: &HashMap<String, Monitor>) -> Option<&Mon
         .find(|m| x >= m.bounds.x as i32 && x < (m.bounds.x + m.bounds.w) as i32)
 }
 
+/// Find a monitor whose Y-span includes `y`, regardless of X. The vertical
+/// twin of [`monitor_for_x`]: used for gap-zone crossings between
+/// vertically-stacked monitors whose OS x-offsets differ, where the raw
+/// destination x is outside the target monitor's OS x-range.
+pub fn monitor_for_y(y: i32, monitors: &HashMap<String, Monitor>) -> Option<&Monitor> {
+    monitors
+        .values()
+        .find(|m| y >= m.bounds.y as i32 && y < (m.bounds.y + m.bounds.h) as i32)
+}
+
 /// Pin a cursor position to source monitor bounds in OS pixel space. Used to
 /// "block" a crossing when the user-defined physical layout doesn't actually
 /// share a continuous edge at the cursor's height (or width, for vertical
@@ -106,7 +116,51 @@ pub fn remap_transition(
                 return Some((tx, ty));
             }
 
-            // Same monitor x-span or no monitor at all: block inside source bounds.
+            // Vertical twin of the above: new_y falls in a *different* monitor's
+            // y-span, so this is a vertical gap-zone crossing (stacked monitors
+            // with different OS x-offsets). Preserve physical-space x to find the
+            // correct landing column instead of clamping the raw pixel.
+            if let Some(dest_mon) =
+                monitor_for_y(new_y, monitors).filter(|m| m.identifier != old_mon.identifier)
+            {
+                let old_local_x = cursor_mapper::to_physical(
+                    Point {
+                        x: old_x as f32,
+                        y: old_y as f32,
+                    },
+                    old_mon,
+                )
+                .x;
+                let world_x = old_mon.position_mm.x + old_local_x;
+                let (dest_w_mm, _) = dest_mon.physical_size_mm();
+                let dest_world_left = dest_mon.position_mm.x;
+                let dest_world_right = dest_world_left + dest_w_mm;
+                if world_x < dest_world_left || world_x > dest_world_right {
+                    // Destination doesn't physically exist at this world x
+                    // (stacked monitors don't overlap here). Block the crossing.
+                    return pin_to_source(old_mon, new_x, new_y);
+                }
+                let target_local_x = world_x - dest_mon.position_mm.x;
+                let target_os_x = cursor_mapper::to_os_pos(
+                    Point {
+                        x: target_local_x,
+                        y: 0.0,
+                    },
+                    dest_mon,
+                )
+                .x;
+                let tx = (target_os_x as i32).clamp(
+                    dest_mon.bounds.x as i32,
+                    (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
+                );
+                let ty = new_y.clamp(
+                    dest_mon.bounds.y as i32,
+                    (dest_mon.bounds.y + dest_mon.bounds.h - 1.0) as i32,
+                );
+                return Some((tx, ty));
+            }
+
+            // Same monitor x/y-span or no monitor at all: block inside source bounds.
             pin_to_source(old_mon, new_x, new_y)
         }
 
@@ -350,6 +404,59 @@ mod tests {
             ty > 165,
             "Gap zone crossing should map above 1080p floor, got y={}",
             ty
+        );
+    }
+
+    /// Vertical twin of `horizontal_crossing_preserves_physical_y`: crossing
+    /// down from the source's horizontal centre lands at the destination's
+    /// horizontal centre when both panels are the same physical size, despite
+    /// the destination having more horizontal pixels. A raw pixel copy keeps
+    /// x=960; physical remapping yields B's centre at ~1280.
+    #[test]
+    fn vertical_crossing_preserves_physical_x() {
+        let mut monitors = HashMap::new();
+        monitors.insert(
+            "A".into(),
+            make_monitor("A", 0.0, -1080.0, 1920.0, 1080.0, 81.59),
+        );
+        monitors.insert(
+            "B".into(),
+            make_monitor("B", 0.0, 0.0, 2560.0, 1440.0, 108.84),
+        );
+
+        let (cx, _) = remap_transition(960, -1, 960, 0, &monitors)
+            .expect("expected a correction crossing into a wider-pixel monitor");
+        assert!(
+            (cx - 1280).abs() <= 1,
+            "expected landing at destination horizontal centre (~1280), got x={cx}"
+        );
+    }
+
+    /// Vertical gap-zone twin of `gap_zone_crossing_uses_physical_y`. Top 1080p
+    /// offset right by 165 px, bottom 1440p at x=0. Cursor at the left of the
+    /// 1440p moving up into the 1080p's gap zone (x=5 < 165). Physical mapping
+    /// should land ~x=168 on the 1080p, not snapped to its x=165 left edge.
+    #[test]
+    fn vertical_gap_zone_crossing_uses_physical_x() {
+        let mut monitors = HashMap::new();
+        monitors.insert(
+            "top".into(),
+            make_monitor("top", 165.0, -1080.0, 1920.0, 1080.0, 81.59),
+        );
+        monitors.insert(
+            "bottom".into(),
+            make_monitor("bottom", 0.0, 0.0, 2560.0, 1440.0, 108.79),
+        );
+
+        let result = remap_transition(5, 0, 5, -1, &monitors);
+        assert!(
+            result.is_some(),
+            "vertical gap-zone crossing should produce a correction"
+        );
+        let (tx, _) = result.unwrap();
+        assert!(
+            tx > 165,
+            "vertical gap-zone crossing should map right of the 1080p left edge, got x={tx}"
         );
     }
 }
