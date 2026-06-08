@@ -76,6 +76,20 @@ Switching backends requires restarting RustCursor. The currently active backend 
 
 The remap math needs each monitor's physical diagonal size to convert pixels to millimetres, plus a `position_mm` for each monitor (the physical top-left in shared world coordinates). A `default_size_in` (inches) applies to every monitor without an explicit override; `position_mm` defaults to a left-to-right cumulative-width walk so monitors touch along their OS-x order with y=0.
 
+> **Important: the layout must match Windows Display Settings.** RustCursor only
+> corrects *where the cursor lands* when it crosses an edge that **Windows already
+> has** between your monitors; it does not create crossing edges. Which monitors
+> are adjacent, and therefore whether you cross left/right or top/bottom, is set
+> entirely by Windows Display Settings. The Monitors-tab canvas (and `position_mm`)
+> only describes the *physical* arrangement for the remap math, it does not move
+> your monitors in Windows. So to get **vertical (top/bottom) crossings you must
+> first stack the monitors vertically in Windows Display Settings**, then mirror
+> that arrangement in the Monitors tab. Arranging them vertically only in
+> RustCursor while Windows still has them side by side makes the two panels'
+> physical heights non-overlapping, so every left/right crossing is blocked and
+> the cursor sticks at the edge (and vice-versa for a horizontal `position_mm` on
+> a vertically-stacked Windows layout). Keep the two arrangements consistent.
+
 Overrides are stored per **display set** under `[[profile]]`. A profile matches when its `hwids` field (a set of stable monitor IDs) equals the set of monitors currently plugged in, so docking/undocking a laptop or rearranging cables picks the right layout automatically. The Settings GUI's Monitors tab writes profiles for you; the hand-edited form looks like:
 
 ```toml
