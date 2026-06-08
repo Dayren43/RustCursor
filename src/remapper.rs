@@ -107,19 +107,7 @@ pub fn remap_transition(
             }
 
             // Same monitor x-span or no monitor at all: block inside source bounds.
-            let pinned_x = new_x.clamp(
-                old_mon.bounds.x as i32,
-                (old_mon.bounds.x + old_mon.bounds.w - 1.0) as i32,
-            );
-            let pinned_y = new_y.clamp(
-                old_mon.bounds.y as i32,
-                (old_mon.bounds.y + old_mon.bounds.h - 1.0) as i32,
-            );
-            if pinned_x == new_x && pinned_y == new_y {
-                None
-            } else {
-                Some((pinned_x, pinned_y))
-            }
+            pin_to_source(old_mon, new_x, new_y)
         }
 
         // ── Normal crossing: both monitors known ─────────────────────────
@@ -234,8 +222,13 @@ mod tests {
         }
     }
 
+    /// Crossing from the source's vertical centre should land at the
+    /// destination's vertical centre when both panels are the same physical
+    /// size, even though the destination has more vertical pixels. A raw pixel
+    /// copy would keep y=540 (above B's centre); physical remapping yields B's
+    /// centre at ~720.
     #[test]
-    fn horizontal_crossing_preserves_y() {
+    fn horizontal_crossing_preserves_physical_y() {
         let mut monitors = HashMap::new();
         monitors.insert(
             "A".into(),
@@ -243,13 +236,15 @@ mod tests {
         );
         monitors.insert(
             "B".into(),
-            make_monitor("B", 1920.0, 0.0, 1920.0, 1080.0, 81.59),
+            make_monitor("B", 1920.0, 0.0, 2560.0, 1440.0, 108.84),
         );
 
-        let result = remap_transition(1919, 540, 1920, 540, &monitors);
-        if let Some((_cx, cy)) = result {
-            assert_eq!(cy, 540, "Y should be preserved on horizontal crossing");
-        }
+        let (_, cy) = remap_transition(1919, 540, 1920, 540, &monitors)
+            .expect("expected a correction crossing into a taller-pixel monitor");
+        assert!(
+            (cy - 720).abs() <= 1,
+            "expected landing at destination vertical centre (~720), got y={cy}"
+        );
     }
 
     #[test]
