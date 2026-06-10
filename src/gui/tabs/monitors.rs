@@ -5,7 +5,9 @@
 //! updates that monitor's `position_mm` locally so the user sees the
 //! preview move. Disk write + IPC reload of the parent's cursor remap fires
 //! once when the drag ends (live during-drag updates aren't viable across
-//! the subprocess boundary).
+//! the subprocess boundary); the write pins every HWID-bearing monitor's
+//! position, not just the dragged one, so saved profiles never mix pinned
+//! and default-seeded coordinate bases.
 //!
 //! Snap-to-edge is applied during drag: the dragged monitor's edges snap to
 //! any other monitor's edges within 10 mm (touching candidates: left-to-right
@@ -334,13 +336,15 @@ impl MonitorsTab {
         }
     }
 
+    /// Persist the layout after a drag ends. Writes every row with a HWID,
+    /// not just the dragged one, so the profile is always a complete snapshot
+    /// in one coordinate basis — pinning only the dragged monitor would leave
+    /// the others default-seeded against a layout that no longer matches.
     fn save_position(&mut self, idx: usize) {
-        let Some(hwid) = self.rows[idx].hwid.clone() else {
+        if self.rows[idx].hwid.is_none() {
             // No HWID -> can't persist; row stays edited in-memory only.
             return;
-        };
-        let pos = self.rows[idx].position_mm;
-        let size = self.rows[idx].size_in;
+        }
 
         let connected_hwids: Vec<String> =
             self.rows.iter().filter_map(|r| r.hwid.clone()).collect();
@@ -353,14 +357,25 @@ impl MonitorsTab {
 
         let result = (|| -> Result<(), String> {
             let mut doc = ConfigDoc::load()?;
-            doc.upsert_profile_monitor(&connected_hwids, &hwid, size, Some(pos), &description);
+            for row in self.rows.iter().filter(|r| r.hwid.is_some()) {
+                let hwid = row.hwid.as_deref().expect("filtered on hwid presence");
+                doc.upsert_profile_monitor(
+                    &connected_hwids,
+                    hwid,
+                    row.size_in,
+                    Some(row.position_mm),
+                    &description,
+                );
+            }
             doc.save()
         })();
 
         match result {
             Ok(()) => {
                 self.last_error = None;
-                self.rows[idx].initial_position_mm = pos;
+                for row in self.rows.iter_mut() {
+                    row.initial_position_mm = row.position_mm;
+                }
                 crate::gui::reload_active_profile();
             }
             Err(e) => self.last_error = Some(e),
