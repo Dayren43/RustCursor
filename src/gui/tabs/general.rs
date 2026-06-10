@@ -4,10 +4,16 @@
 //! change. The running RustCursor process keeps its in-memory config, so a
 //! restart banner appears as soon as the saved value diverges from what was
 //! loaded at startup.
+//!
+//! The backend section only exists when more than one backend is compiled in
+//! (`interception-backend` feature); a lowlevel-only build has nothing to
+//! choose, so rendering a single inert radio would just be noise.
 
 use eframe::egui;
 
-use rust_cursor::config::{Backend, Config};
+#[cfg(feature = "interception-backend")]
+use rust_cursor::config::Backend;
+use rust_cursor::config::Config;
 
 use crate::gui::autostart;
 use crate::gui::config_io::ConfigDoc;
@@ -17,10 +23,12 @@ pub struct GeneralTab {
     /// (the input-loop thread is spawned once at startup and can't be swapped
     /// live). `default_size_in` is also snapshotted for the save-and-clear
     /// flow, but doesn't drive the banner since it hot-reloads.
+    #[cfg(feature = "interception-backend")]
     initial_backend: Backend,
     initial_default_size_in: f32,
 
     /// Live values driven by the widgets.
+    #[cfg(feature = "interception-backend")]
     backend: Backend,
     default_size_in: f32,
 
@@ -38,8 +46,10 @@ impl GeneralTab {
     pub fn new() -> Self {
         let cfg = Config::load();
         Self {
+            #[cfg(feature = "interception-backend")]
             initial_backend: cfg.backend,
             initial_default_size_in: cfg.default_size_in,
+            #[cfg(feature = "interception-backend")]
             backend: cfg.backend,
             default_size_in: cfg.default_size_in,
             autostart_enabled: autostart::is_enabled(),
@@ -52,39 +62,9 @@ impl GeneralTab {
         ui.heading("General");
         ui.add_space(8.0);
 
-        if self.needs_restart() {
-            ui.colored_label(
-                egui::Color32::from_rgb(220, 170, 80),
-                "Restart RustCursor for the backend change to take effect.",
-            );
-            ui.add_space(8.0);
-        }
+        #[cfg(feature = "interception-backend")]
+        self.backend_section(ui);
 
-        ui.label("Backend");
-        let prev_backend = self.backend;
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut self.backend, Backend::Lowlevel, "lowlevel");
-            #[cfg(feature = "interception-backend")]
-            ui.radio_value(&mut self.backend, Backend::Interception, "interception");
-        });
-        ui.label(
-            egui::RichText::new(match self.backend {
-                Backend::Lowlevel => {
-                    "User-mode WH_MOUSE_LL hook. AC-compatible, brief snap on crossings."
-                }
-                #[cfg(feature = "interception-backend")]
-                Backend::Interception => {
-                    "Kernel driver. No snap artifact, blocked by kernel anti-cheats."
-                }
-            })
-            .small()
-            .weak(),
-        );
-        if self.backend != prev_backend {
-            self.save_backend();
-        }
-
-        ui.add_space(12.0);
         ui.label("Default monitor diagonal (inches)");
         let prev_size = self.default_size_in;
         ui.add(
@@ -125,12 +105,45 @@ impl GeneralTab {
         }
     }
 
-    fn needs_restart(&self) -> bool {
-        // Only backend changes require a restart; size edits hot-reload via
-        // `reload_active_profile` in `save_default_size`.
-        self.backend != self.initial_backend
+    /// Backend radio group plus the restart banner. Only backend changes
+    /// require a restart; size edits hot-reload via `reload_active_profile`
+    /// in `save_default_size`.
+    #[cfg(feature = "interception-backend")]
+    fn backend_section(&mut self, ui: &mut egui::Ui) {
+        if self.backend != self.initial_backend {
+            ui.colored_label(
+                egui::Color32::from_rgb(220, 170, 80),
+                "Restart RustCursor for the backend change to take effect.",
+            );
+            ui.add_space(8.0);
+        }
+
+        ui.label("Backend");
+        let prev_backend = self.backend;
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut self.backend, Backend::Lowlevel, "lowlevel");
+            ui.radio_value(&mut self.backend, Backend::Interception, "interception");
+        });
+        ui.label(
+            egui::RichText::new(match self.backend {
+                Backend::Lowlevel => {
+                    "User-mode WH_MOUSE_LL hook. AC-compatible, brief snap on crossings."
+                }
+                Backend::Interception => {
+                    "Kernel driver. No snap artifact, blocked by kernel anti-cheats."
+                }
+            })
+            .small()
+            .weak(),
+        );
+        if self.backend != prev_backend {
+            self.save_backend();
+        }
+
+        ui.add_space(12.0);
     }
 
+    #[cfg(feature = "interception-backend")]
     fn save_backend(&mut self) {
         let backend = self.backend;
         if let Err(e) = self.write_with(|doc| doc.set_backend(backend)) {

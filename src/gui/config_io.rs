@@ -6,7 +6,9 @@ use std::path::PathBuf;
 
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table, value};
 
-use rust_cursor::config::{Backend, path};
+#[cfg(feature = "interception-backend")]
+use rust_cursor::config::Backend;
+use rust_cursor::config::path;
 
 pub struct ConfigDoc {
     path: PathBuf,
@@ -32,10 +34,12 @@ impl ConfigDoc {
             .map_err(|e| format!("write {}: {}", self.path.display(), e))
     }
 
+    /// Only exists alongside the General tab's backend section: a build with
+    /// a single compiled-in backend has no UI that writes this field.
+    #[cfg(feature = "interception-backend")]
     pub fn set_backend(&mut self, backend: Backend) {
         let s = match backend {
             Backend::Lowlevel => "lowlevel",
-            #[cfg(feature = "interception-backend")]
             Backend::Interception => "interception",
         };
         self.doc["backend"] = value(s);
