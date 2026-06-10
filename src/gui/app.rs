@@ -87,12 +87,12 @@ pub fn run() {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([520.0, 420.0])
             .with_min_inner_size([400.0, 300.0])
-            .with_title("RustCursor Settings")
+            .with_title(crate::gui::SETTINGS_WINDOW_TITLE)
             .with_icon(load_window_icon()),
         ..Default::default()
     };
     let _ = eframe::run_native(
-        "RustCursor Settings",
+        crate::gui::SETTINGS_WINDOW_TITLE,
         options,
         Box::new(|_cc| Ok(Box::<SettingsApp>::default())),
     );

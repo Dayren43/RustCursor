@@ -20,9 +20,13 @@ mod tabs;
 
 use std::os::windows::ffi::OsStrExt;
 
-use windows::Win32::Foundation::{LPARAM, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, PostMessageW, WM_APP};
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, PostMessageW, WM_APP, WM_CLOSE};
 use windows::core::PCWSTR;
+
+/// Title of the Settings window. `app.rs` sets it on the viewport;
+/// `close_settings_windows` finds windows by it when the parent quits.
+pub(crate) const SETTINGS_WINDOW_TITLE: &str = "RustCursor Settings";
 
 /// Mirror of the parent's `WM_RUSTCURSOR_RELOAD` constant. Kept here as well
 /// so the subprocess (which doesn't link the platform/windows/layout.rs
@@ -70,6 +74,32 @@ fn signal_parent_reload() {
             return;
         }
         let _ = PostMessageW(Some(hwnd), WM_RUSTCURSOR_RELOAD, WPARAM(0), LPARAM(0));
+    }
+}
+
+/// Called by the parent after the tray pump exits (Quit selected). Settings
+/// subprocesses are independent processes, so quitting the parent would
+/// otherwise leave their windows orphaned. Posts `WM_CLOSE` to every
+/// top-level window with the Settings title — the graceful equivalent of
+/// clicking X, so eframe unwinds and each subprocess exits on its own. A
+/// subprocess whose window isn't created yet is missed; that race is a few
+/// hundred ms wide and the leftover window is still individually closable.
+pub fn close_settings_windows() {
+    let title_wide: Vec<u16> = std::ffi::OsStr::new(SETTINGS_WINDOW_TITLE)
+        .encode_wide()
+        .chain([0])
+        .collect();
+    unsafe {
+        let mut after: Option<HWND> = None;
+        loop {
+            let found = FindWindowExW(None, after, PCWSTR::null(), PCWSTR(title_wide.as_ptr()));
+            let Ok(hwnd) = found else { break };
+            if hwnd.0.is_null() {
+                break;
+            }
+            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
+            after = Some(hwnd);
+        }
     }
 }
 

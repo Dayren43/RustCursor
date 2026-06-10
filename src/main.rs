@@ -70,4 +70,8 @@ fn main() {
     });
 
     platform::windows::run_tray_loop(backend);
+
+    // Tray Quit ends the pump above; close any Settings subprocess windows
+    // on the way out so quitting the app doesn't leave them orphaned.
+    gui::close_settings_windows();
 }
