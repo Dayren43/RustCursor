@@ -89,8 +89,14 @@ fn default_size_in() -> f32 {
 
 impl Config {
     /// Load config from the standard location, creating a default file with
-    /// documentation if it does not yet exist. Falls back to `Config::default()`
-    /// on any I/O or parse error so a malformed config never wedges startup.
+    /// documentation if it does not yet exist. Parsing is resilient per
+    /// top-level field: an invalid value is dropped with a warning instead of
+    /// discarding the whole document, so one bad field can't silently wipe
+    /// the profiles' calibration or the bypass list. Warnings from the most
+    /// recent load are retrievable via [`load_warnings`]; only an unreadable
+    /// or syntactically broken file falls back to `Config::default()`
+    /// entirely. Exception: in single-backend builds an invalid `backend` is
+    /// ignored without a warning, since the build runs lowlevel regardless.
     pub fn load() -> Self {
         let Some(path) = path() else {
             return Self::default();
@@ -101,9 +107,55 @@ impl Config {
             }
             let _ = std::fs::write(&path, DEFAULT_CONFIG);
         }
-        match std::fs::read_to_string(&path) {
-            Ok(s) => toml::from_str(&s).unwrap_or_default(),
-            Err(_) => Self::default(),
+        let (cfg, warnings) = match std::fs::read_to_string(&path) {
+            Ok(s) => Self::parse_resilient(&s),
+            Err(e) => (
+                Self::default(),
+                vec![format!("could not read {}: {e}", path.display())],
+            ),
+        };
+        *LOAD_WARNINGS.write().expect("LOAD_WARNINGS poisoned") = warnings;
+        cfg
+    }
+
+    /// Parse `s`, salvaging whatever deserializes cleanly. Fast path: the
+    /// whole document parses and there are no warnings. On failure each
+    /// top-level field is deserialized independently against the syntax tree;
+    /// fields that fail keep their default and produce a warning naming them.
+    fn parse_resilient(s: &str) -> (Self, Vec<String>) {
+        match toml::from_str::<Self>(s) {
+            Ok(cfg) => (cfg, Vec::new()),
+            Err(_) => match s.parse::<toml::Table>() {
+                Ok(table) => {
+                    let mut warnings = Vec::new();
+                    let mut cfg = Self::default();
+                    // `backend` only selects behaviour when more than one
+                    // backend is compiled in. A lowlevel-only build runs
+                    // lowlevel whatever the field says (and has no GUI to
+                    // rewrite it), so an invalid value there is ignored
+                    // without a warning rather than nagging unactionably.
+                    #[cfg(feature = "interception-backend")]
+                    if let Some(v) = field::<Backend>(&table, "backend", &mut warnings) {
+                        cfg.backend = v;
+                    }
+                    if let Some(v) =
+                        field::<Vec<String>>(&table, "bypass_processes", &mut warnings)
+                    {
+                        cfg.bypass_processes = v;
+                    }
+                    if let Some(v) = field::<f32>(&table, "default_size_in", &mut warnings) {
+                        cfg.default_size_in = v;
+                    }
+                    if let Some(v) = field::<Vec<Profile>>(&table, "profile", &mut warnings) {
+                        cfg.profiles = v;
+                    }
+                    (cfg, warnings)
+                }
+                Err(e) => (
+                    Self::default(),
+                    vec![format!("not valid TOML, all defaults in effect: {}", e.message())],
+                ),
+            },
         }
     }
 
@@ -122,10 +174,41 @@ impl Config {
     }
 }
 
+/// Deserialize one top-level field out of the parsed syntax tree, pushing a
+/// warning and returning `None` (caller keeps the default) when invalid.
+fn field<T: serde::de::DeserializeOwned>(
+    table: &toml::Table,
+    key: &str,
+    warnings: &mut Vec<String>,
+) -> Option<T> {
+    let v = table.get(key)?;
+    match v.clone().try_into::<T>() {
+        Ok(t) => Some(t),
+        Err(e) => {
+            warnings.push(format!("`{key}` ignored ({}), default in effect", e.message()));
+            None
+        }
+    }
+}
+
 /// Path to the config file: `%LOCALAPPDATA%\RustCursor\config.toml`.
 pub fn path() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA")
         .map(|s| PathBuf::from(s).join("RustCursor").join("config.toml"))
+}
+
+// ── Config-load warnings ───────────────────────────────────────────────────
+// Populated by every `Config::load`; surfaced as a banner in the Settings GUI
+// and in the session header of cursor_log.txt (log builds). Without this a
+// salvaged field would fall back to its default with no visible trace —
+// `windows_subsystem = "windows"` means stderr goes nowhere.
+
+static LOAD_WARNINGS: RwLock<Vec<String>> = RwLock::new(Vec::new());
+
+/// Warnings recorded by the most recent `Config::load` in this process.
+/// Empty when the config parsed cleanly.
+pub fn load_warnings() -> Vec<String> {
+    LOAD_WARNINGS.read().expect("LOAD_WARNINGS poisoned").clone()
 }
 
 // ── Active-sizes lookup ────────────────────────────────────────────────────
@@ -264,3 +347,77 @@ const DEFAULT_CONFIG: &str = indoc::indoc! {r#"
     # size_in     = 27.0
     # position_mm = [600.0, 0.0]
 "#};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Valid calibration data that must survive any single bad sibling field.
+    const CALIBRATION: &str = r#"
+        bypass_processes = ["game.exe"]
+        default_size_in = 24.0
+
+        [[profile]]
+        hwids = ["MONITOR\\AAA1111"]
+        description = "test"
+
+        [[profile.monitor]]
+        hwid = "MONITOR\\AAA1111"
+        size_in = 31.5
+        position_mm = [10.0, 20.0]
+    "#;
+
+    #[test]
+    fn clean_document_parses_without_warnings() {
+        let (cfg, warnings) = Config::parse_resilient(CALIBRATION);
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_eq!(cfg.profiles.len(), 1);
+        assert_eq!(cfg.profiles[0].monitors[0].position_mm, Some([10.0, 20.0]));
+    }
+
+    #[test]
+    fn default_config_template_parses_without_warnings() {
+        let (_, warnings) = Config::parse_resilient(DEFAULT_CONFIG);
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn unknown_backend_keeps_calibration() {
+        let doc = format!("backend = \"bogus\"\n{CALIBRATION}");
+        let (cfg, warnings) = Config::parse_resilient(&doc);
+        assert_eq!(cfg.backend, Backend::Lowlevel);
+        assert_eq!(cfg.bypass_processes, vec!["game.exe".to_string()]);
+        assert_eq!(cfg.default_size_in, 24.0);
+        assert_eq!(cfg.profiles.len(), 1);
+        assert_eq!(cfg.profiles[0].monitors[0].size_in, 31.5);
+        assert_eq!(cfg.profiles[0].monitors[0].position_mm, Some([10.0, 20.0]));
+        // A bad backend only warrants a warning when the build actually has
+        // a backend choice; single-backend builds ignore the field silently.
+        #[cfg(feature = "interception-backend")]
+        {
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("backend"), "warning: {}", warnings[0]);
+        }
+        #[cfg(not(feature = "interception-backend"))]
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+    }
+
+    #[test]
+    fn bad_profile_field_keeps_other_fields_and_warns() {
+        let doc = "default_size_in = 24.0\nbypass_processes = [\"game.exe\"]\nprofile = 3\n";
+        let (cfg, warnings) = Config::parse_resilient(doc);
+        assert_eq!(cfg.default_size_in, 24.0);
+        assert_eq!(cfg.bypass_processes, vec!["game.exe".to_string()]);
+        assert!(cfg.profiles.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("profile"), "warning: {}", warnings[0]);
+    }
+
+    #[test]
+    fn syntax_error_falls_back_to_defaults_with_warning() {
+        let (cfg, warnings) = Config::parse_resilient("backend = [unterminated");
+        assert_eq!(cfg.default_size_in, 27.0);
+        assert!(cfg.profiles.is_empty());
+        assert_eq!(warnings.len(), 1);
+    }
+}

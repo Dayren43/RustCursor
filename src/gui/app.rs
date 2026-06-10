@@ -40,6 +40,30 @@ impl Default for SettingsApp {
 
 impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Config-load warnings (salvaged fields, unreadable file). Refreshed
+        // by every `Config::load`, so the banner clears once a save or tab
+        // refresh observes a clean parse.
+        let warnings = rust_cursor::config::load_warnings();
+        if !warnings.is_empty() {
+            egui::TopBottomPanel::top("config_warnings").show(ctx, |ui| {
+                ui.add_space(4.0);
+                for w in &warnings {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(220, 170, 80),
+                        format!("config.toml: {w}"),
+                    );
+                }
+                ui.label(
+                    egui::RichText::new(
+                        "Affected settings fall back to defaults until the value is fixed here or in config.toml.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(4.0);
+            });
+        }
+
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::General, "General");
