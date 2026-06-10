@@ -14,6 +14,12 @@
 //! and right-to-left; alignment candidates: matching lefts/rights/tops/
 //! bottoms). Holding **Alt** during a drag disables snap.
 //!
+//! The canvas also validates the arrangement against the Windows pixel
+//! layout every frame: pairs that are adjacent in Windows but have no
+//! cross-axis overlap here would have all their crossings blocked by the
+//! remapper, so they get a red outline and an explanation (see
+//! [`layout_issues`]).
+//!
 //! Sizes come from a fresh `Config::load()` -> active profile lookup via
 //! `build_monitor_map`, so the displayed values match what the running
 //! remapper uses. Edits auto-save on `DragValue::drag_stopped` /
@@ -33,6 +39,10 @@ use crate::gui::config_io::ConfigDoc;
 const SNAP_MM: f32 = 10.0;
 /// Canvas height in pixels. The width fills the available area.
 const CANVAS_PX_H: f32 = 220.0;
+/// Minimum cross-axis overlap in millimetres for a Windows-adjacent pair to
+/// count as having a usable shared physical edge. Below this every crossing
+/// at the pair's pixel boundary pins to the source monitor.
+const MIN_SHARED_EDGE_MM: f32 = 5.0;
 
 struct MonitorRow {
     device: String,
@@ -122,7 +132,16 @@ impl MonitorsTab {
             return;
         }
 
-        let drag_stopped_idx = self.show_layout_canvas(ui);
+        // Recomputed every frame so the highlight tracks the drag live and
+        // clears the moment the user fixes the arrangement.
+        let issues = layout_issues(&self.rows);
+        let mut flagged = vec![false; self.rows.len()];
+        for issue in &issues {
+            flagged[issue.a] = true;
+            flagged[issue.b] = true;
+        }
+
+        let drag_stopped_idx = self.show_layout_canvas(ui, &flagged);
         if let Some(idx) = drag_stopped_idx {
             self.save_position(idx);
         }
@@ -133,6 +152,19 @@ impl MonitorsTab {
                 .small()
                 .weak(),
         );
+        if !issues.is_empty() {
+            ui.add_space(4.0);
+            for issue in &issues {
+                ui.colored_label(egui::Color32::from_rgb(220, 90, 90), &issue.message);
+            }
+            ui.label(
+                egui::RichText::new(
+                    "Arrange the rectangles to match how the monitors are laid out in Windows Display Settings.",
+                )
+                .small()
+                .weak(),
+            );
+        }
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(8.0);
@@ -156,8 +188,9 @@ impl MonitorsTab {
     }
 
     /// Returns the row index whose drag just ended (if any), so the caller
-    /// can write the position to disk.
-    fn show_layout_canvas(&mut self, ui: &mut egui::Ui) -> Option<usize> {
+    /// can write the position to disk. Rows marked in `flagged` are part of
+    /// a layout issue and get a red outline.
+    fn show_layout_canvas(&mut self, ui: &mut egui::Ui, flagged: &[bool]) -> Option<usize> {
         let canvas_w = ui.available_width();
         let (canvas_rect, _) =
             ui.allocate_exact_size(egui::vec2(canvas_w, CANVAS_PX_H), egui::Sense::hover());
@@ -212,11 +245,12 @@ impl MonitorsTab {
                 egui::Color32::from_rgb(45, 60, 90)
             };
             painter.rect_filled(screen_rect, 4.0, fill);
-            painter.rect_stroke(
-                screen_rect,
-                4.0,
-                egui::Stroke::new(1.0, egui::Color32::from_gray(220)),
-            );
+            let stroke = if flagged.get(i).copied().unwrap_or(false) {
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 90, 90))
+            } else {
+                egui::Stroke::new(1.0, egui::Color32::from_gray(220))
+            };
+            painter.rect_stroke(screen_rect, 4.0, stroke);
             painter.text(
                 screen_rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -436,5 +470,160 @@ fn apply_snap(rows: &mut [MonitorRow], idx: usize) {
     }
     if let Some(dy) = best_dy {
         rows[idx].position_mm.1 += dy;
+    }
+}
+
+/// A monitor pair whose physical arrangement makes the remapper block every
+/// crossing at their shared Windows edge.
+struct LayoutIssue {
+    a: usize,
+    b: usize,
+    message: String,
+}
+
+/// Detect physical layouts that can't work with the current Windows pixel
+/// arrangement. Windows only lets the cursor cross where pixel rects are
+/// adjacent, and at such a boundary the remapper preserves the cross-axis
+/// world-mm coordinate, pinning to the source when the destination has no
+/// panel there (see `remap_transition`). So a Windows-adjacent pair with no
+/// cross-axis mm overlap is unreachable from each other: flag it.
+///
+/// Deliberately not flagged: in-plane order disagreeing with Windows (the
+/// remapper never consults it on that axis) and partial overlaps (modelling
+/// offset panels is the point of the app).
+fn layout_issues(rows: &[MonitorRow]) -> Vec<LayoutIssue> {
+    let mut issues = Vec::new();
+    for i in 0..rows.len() {
+        for j in (i + 1)..rows.len() {
+            let (a, b) = (&rows[i], &rows[j]);
+
+            let (ax0, ay0) = (a.os_x as i64, a.os_y as i64);
+            let (ax1, ay1) = (ax0 + a.resolution.0 as i64, ay0 + a.resolution.1 as i64);
+            let (bx0, by0) = (b.os_x as i64, b.os_y as i64);
+            let (bx1, by1) = (bx0 + b.resolution.0 as i64, by0 + b.resolution.1 as i64);
+
+            let px_x_overlap = ax1.min(bx1) - ax0.max(bx0);
+            let px_y_overlap = ay1.min(by1) - ay0.max(by0);
+            // Edge adjacency in the OS arrangement. Touching on one axis
+            // implies zero overlap there, so the two cases are exclusive;
+            // corner-only contact (both overlaps zero) is skipped as a
+            // degenerate crossing nobody hits in practice.
+            let side_by_side = (ax1 == bx0 || bx1 == ax0) && px_y_overlap > 0;
+            let stacked = (ay1 == by0 || by1 == ay0) && px_x_overlap > 0;
+            if !side_by_side && !stacked {
+                continue;
+            }
+
+            let (a_w_mm, a_h_mm) = a.size_mm();
+            let (b_w_mm, b_h_mm) = b.size_mm();
+            let mm_x_overlap = (a.position_mm.0 + a_w_mm).min(b.position_mm.0 + b_w_mm)
+                - a.position_mm.0.max(b.position_mm.0);
+            let mm_y_overlap = (a.position_mm.1 + a_h_mm).min(b.position_mm.1 + b_h_mm)
+                - a.position_mm.1.max(b.position_mm.1);
+
+            let message = if side_by_side && mm_y_overlap < MIN_SHARED_EDGE_MM {
+                format!(
+                    "{} and {} are side by side in Windows but don't overlap vertically here; crossings between them will be blocked.",
+                    a.device, b.device
+                )
+            } else if stacked && mm_x_overlap < MIN_SHARED_EDGE_MM {
+                format!(
+                    "{} and {} are stacked in Windows but don't overlap horizontally here; crossings between them will be blocked.",
+                    a.device, b.device
+                )
+            } else {
+                continue;
+            };
+            issues.push(LayoutIssue { a: i, b: j, message });
+        }
+    }
+    issues
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 27" 16:9 panel: ~597.9 mm x ~336.3 mm.
+    fn row(device: &str, os_x: i32, os_y: i32, res: (u32, u32), mm: (f32, f32)) -> MonitorRow {
+        MonitorRow {
+            device: device.to_string(),
+            hwid: None,
+            resolution: res,
+            os_x,
+            os_y,
+            size_in: 27.0,
+            initial_size_in: 27.0,
+            position_mm: mm,
+            initial_position_mm: mm,
+        }
+    }
+
+    #[test]
+    fn consistent_side_by_side_has_no_issues() {
+        let rows = vec![
+            row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
+            row("B", 1920, 0, (1920, 1080), (600.0, 0.0)),
+        ];
+        assert!(layout_issues(&rows).is_empty());
+    }
+
+    #[test]
+    fn stacked_in_windows_but_side_by_side_here_is_blocked() {
+        let rows = vec![
+            row("A", 0, -1080, (1920, 1080), (0.0, 0.0)),
+            row("B", 0, 0, (1920, 1080), (600.0, 0.0)),
+        ];
+        let issues = layout_issues(&rows);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].message.contains("stacked"), "{}", issues[0].message);
+    }
+
+    #[test]
+    fn side_by_side_in_windows_but_stacked_here_is_blocked() {
+        let rows = vec![
+            row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
+            row("B", 1920, 0, (1920, 1080), (0.0, 340.0)),
+        ];
+        let issues = layout_issues(&rows);
+        assert_eq!(issues.len(), 1);
+        assert!(
+            issues[0].message.contains("side by side"),
+            "{}",
+            issues[0].message
+        );
+    }
+
+    /// Offset panels with partial overlap are the app's normal use case and
+    /// must not be flagged.
+    #[test]
+    fn partial_cross_axis_overlap_is_fine() {
+        let rows = vec![
+            row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
+            row("B", 1920, 0, (1920, 1080), (600.0, 200.0)),
+        ];
+        assert!(layout_issues(&rows).is_empty());
+    }
+
+    /// Pairs that aren't adjacent in the Windows arrangement can't cross
+    /// directly, so their physical relationship is unconstrained.
+    #[test]
+    fn non_adjacent_pair_is_ignored() {
+        let rows = vec![
+            row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
+            row("B", 5000, 0, (1920, 1080), (0.0, 340.0)),
+        ];
+        assert!(layout_issues(&rows).is_empty());
+    }
+
+    /// Mirrors the real mixed-DPI layout: 1080p left with an OS y-offset,
+    /// 1440p right at y=0. Adjacent with healthy vertical mm overlap.
+    #[test]
+    fn os_y_offset_pair_with_mm_overlap_is_fine() {
+        let rows = vec![
+            row("left", -1920, 165, (1920, 1080), (0.0, 0.0)),
+            row("right", 0, 0, (2560, 1440), (600.0, 0.0)),
+        ];
+        assert!(layout_issues(&rows).is_empty());
     }
 }
