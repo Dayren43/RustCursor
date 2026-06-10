@@ -138,8 +138,7 @@ impl Config {
                     if let Some(v) = field::<Backend>(&table, "backend", &mut warnings) {
                         cfg.backend = v;
                     }
-                    if let Some(v) =
-                        field::<Vec<String>>(&table, "bypass_processes", &mut warnings)
+                    if let Some(v) = field::<Vec<String>>(&table, "bypass_processes", &mut warnings)
                     {
                         cfg.bypass_processes = v;
                     }
@@ -153,7 +152,10 @@ impl Config {
                 }
                 Err(e) => (
                     Self::default(),
-                    vec![format!("not valid TOML, all defaults in effect: {}", e.message())],
+                    vec![format!(
+                        "not valid TOML, all defaults in effect: {}",
+                        e.message()
+                    )],
                 ),
             },
         }
@@ -185,7 +187,10 @@ fn field<T: serde::de::DeserializeOwned>(
     match v.clone().try_into::<T>() {
         Ok(t) => Some(t),
         Err(e) => {
-            warnings.push(format!("`{key}` ignored ({}), default in effect", e.message()));
+            warnings.push(format!(
+                "`{key}` ignored ({}), default in effect",
+                e.message()
+            ));
             None
         }
     }
@@ -208,7 +213,10 @@ static LOAD_WARNINGS: RwLock<Vec<String>> = RwLock::new(Vec::new());
 /// Warnings recorded by the most recent `Config::load` in this process.
 /// Empty when the config parsed cleanly.
 pub fn load_warnings() -> Vec<String> {
-    LOAD_WARNINGS.read().expect("LOAD_WARNINGS poisoned").clone()
+    LOAD_WARNINGS
+        .read()
+        .expect("LOAD_WARNINGS poisoned")
+        .clone()
 }
 
 // ── Active-sizes lookup ────────────────────────────────────────────────────

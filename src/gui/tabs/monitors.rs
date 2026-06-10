@@ -534,7 +534,11 @@ fn layout_issues(rows: &[MonitorRow]) -> Vec<LayoutIssue> {
             } else {
                 continue;
             };
-            issues.push(LayoutIssue { a: i, b: j, message });
+            issues.push(LayoutIssue {
+                a: i,
+                b: j,
+                message,
+            });
         }
     }
     issues
@@ -576,7 +580,11 @@ mod tests {
         ];
         let issues = layout_issues(&rows);
         assert_eq!(issues.len(), 1);
-        assert!(issues[0].message.contains("stacked"), "{}", issues[0].message);
+        assert!(
+            issues[0].message.contains("stacked"),
+            "{}",
+            issues[0].message
+        );
     }
 
     #[test]
