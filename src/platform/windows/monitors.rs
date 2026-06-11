@@ -137,21 +137,46 @@ pub fn enumerate_hwids() -> Vec<String> {
     hwids
 }
 
+/// Returns true when the OS arrangement is predominantly a vertical stack:
+/// more monitor pairs are separated along y (disjoint y-projections) than
+/// along x. A side-by-side pair separates along x, a stacked pair along y;
+/// a diagonal pair separates along both and contributes to neither side of
+/// the comparison. Ties (single monitor, L-shapes, grids) report false so
+/// those layouts keep the historical horizontal seeding.
+fn is_vertical_stack(rects: &[RECT]) -> bool {
+    let mut horizontal_pairs = 0u32;
+    let mut vertical_pairs = 0u32;
+    for (i, a) in rects.iter().enumerate() {
+        for b in &rects[i + 1..] {
+            if a.right <= b.left || b.right <= a.left {
+                horizontal_pairs += 1;
+            }
+            if a.bottom <= b.top || b.bottom <= a.top {
+                vertical_pairs += 1;
+            }
+        }
+    }
+    vertical_pairs > horizontal_pairs
+}
+
 /// Enumerate all connected monitors and build the monitor map used by the
 /// remapper. Physical sizes come from `config::size_for(device, hwid)`: the
 /// active profile's per-HWID entry takes precedence, falling back to a
 /// legacy device-keyed `[[monitor]]` entry, then to `default_size_in`.
 ///
-/// Default `position_mm` is seeded by walking monitors in OS-x order and
-/// accumulating physical widths so they touch left-to-right with y=0. This
-/// preserves today's behaviour (same physical y origin across monitors) for
-/// any setup where the user hasn't pinned positions in the Settings GUI.
+/// Default `position_mm` is seeded by a cumulative walk along the dominant
+/// axis of the OS arrangement: side-by-side layouts walk OS-x order
+/// accumulating physical widths (touching left-to-right, y=0), vertical
+/// stacks walk OS-y order accumulating physical heights (touching
+/// top-to-bottom, x=0). Either way both monitors share the cross-axis
+/// origin until the user pins real positions in the Settings GUI.
 /// Profile overrides from `config::position_for` win when present.
 pub fn build_monitor_map() -> HashMap<String, Monitor> {
     struct Tmp {
         info: MonitorInfo,
         size_in: f32,
         w_mm: f32,
+        h_mm: f32,
     }
 
     let mut tmps: Vec<Tmp> = enumerate_monitors()
@@ -172,16 +197,27 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
                 info: m,
                 size_in,
                 w_mm,
+                h_mm,
             }
         })
         .collect();
-    tmps.sort_by_key(|t| t.info.rect.left);
 
+    let rects: Vec<RECT> = tmps.iter().map(|t| t.info.rect).collect();
     let mut defaults: HashMap<String, (f32, f32)> = HashMap::new();
-    let mut cum_x_mm = 0.0_f32;
-    for t in &tmps {
-        defaults.insert(t.info.name.clone(), (cum_x_mm, 0.0));
-        cum_x_mm += t.w_mm;
+    if is_vertical_stack(&rects) {
+        tmps.sort_by_key(|t| t.info.rect.top);
+        let mut cum_y_mm = 0.0_f32;
+        for t in &tmps {
+            defaults.insert(t.info.name.clone(), (0.0, cum_y_mm));
+            cum_y_mm += t.h_mm;
+        }
+    } else {
+        tmps.sort_by_key(|t| t.info.rect.left);
+        let mut cum_x_mm = 0.0_f32;
+        for t in &tmps {
+            defaults.insert(t.info.name.clone(), (cum_x_mm, 0.0));
+            cum_x_mm += t.w_mm;
+        }
     }
 
     let mut map = HashMap::new();
@@ -212,4 +248,70 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
         );
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+        RECT {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+
+    #[test]
+    fn single_monitor_is_not_a_stack() {
+        assert!(!is_vertical_stack(&[rect(0, 0, 2560, 1440)]));
+    }
+
+    #[test]
+    fn side_by_side_pair_is_not_a_stack() {
+        assert!(!is_vertical_stack(&[
+            rect(0, 0, 2560, 1440),
+            rect(2560, 120, 4480, 1200),
+        ]));
+    }
+
+    #[test]
+    fn stacked_pair_is_a_stack() {
+        assert!(is_vertical_stack(&[
+            rect(0, 0, 2560, 1440),
+            rect(320, 1440, 2240, 2520),
+        ]));
+    }
+
+    #[test]
+    fn three_monitor_stack_is_a_stack() {
+        assert!(is_vertical_stack(&[
+            rect(0, 0, 2560, 1440),
+            rect(0, 1440, 2560, 2880),
+            rect(0, 2880, 1920, 3960),
+        ]));
+    }
+
+    #[test]
+    fn diagonal_pair_ties_to_horizontal() {
+        // Disjoint along both axes: counts as evidence for both, so the
+        // tie keeps the horizontal default.
+        assert!(!is_vertical_stack(&[
+            rect(0, 0, 2560, 1440),
+            rect(2560, 1440, 4480, 2520),
+        ]));
+    }
+
+    #[test]
+    fn l_shape_ties_to_horizontal() {
+        // Two side-by-side plus one above the left. The top-left vs
+        // bottom-right pair is disjoint on both axes and scores on both
+        // sides, leaving a 2-2 tie that keeps the horizontal default.
+        assert!(!is_vertical_stack(&[
+            rect(0, 0, 2560, 1440),
+            rect(2560, 0, 5120, 1440),
+            rect(0, -1440, 2560, 0),
+        ]));
+    }
 }
