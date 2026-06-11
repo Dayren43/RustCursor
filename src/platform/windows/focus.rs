@@ -8,12 +8,12 @@
 //!     players, or PowerPoint slideshows.
 //!  2. A user-supplied bypass list of process basenames (config.toml). The
 //!     foreground window's owning process is resolved per stroke (cached on
-//!     HWND) and matched case-insensitively.
+//!     HWND + PID) and matched case-insensitively.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
+use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
 use windows::Win32::System::StationsAndDesktops::{
     CloseDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, OpenInputDesktop,
 };
@@ -35,6 +35,7 @@ const SKIP_CACHE_TTL: Duration = Duration::from_millis(50);
 
 pub struct FocusGuard {
     last_hwnd: isize,
+    last_pid: u32,
     last_basename: Option<String>,
     cached_skip: Option<(Instant, bool)>,
 }
@@ -43,6 +44,7 @@ impl FocusGuard {
     pub fn new() -> Self {
         Self {
             last_hwnd: 0,
+            last_pid: 0,
             last_basename: None,
             cached_skip: None,
         }
@@ -108,20 +110,30 @@ impl FocusGuard {
         self.last_basename.as_deref()
     }
 
+    /// Re-resolves the foreground basename when the foreground changes.
+    /// Keyed on (HWND, PID) rather than HWND alone: Windows recycles HWND
+    /// values, so a destroyed window's value can reappear on an unrelated
+    /// process while the raw handle compares equal. The extra
+    /// GetWindowThreadProcessId call is cheap next to the OpenProcess +
+    /// QueryFullProcessImageNameW resolution it gates.
     fn refresh_foreground(&mut self) {
         let hwnd = unsafe { GetForegroundWindow() };
         let raw = hwnd.0 as isize;
-        if raw == 0 || raw == self.last_hwnd {
+        if raw == 0 {
+            return;
+        }
+        let mut pid: u32 = 0;
+        let _tid = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if raw == self.last_hwnd && pid == self.last_pid {
             return;
         }
         self.last_hwnd = raw;
-        self.last_basename = process_basename_for_hwnd(hwnd);
+        self.last_pid = pid;
+        self.last_basename = process_basename_for_pid(pid);
     }
 }
 
-fn process_basename_for_hwnd(hwnd: HWND) -> Option<String> {
-    let mut pid: u32 = 0;
-    let _tid = unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+fn process_basename_for_pid(pid: u32) -> Option<String> {
     if pid == 0 {
         return None;
     }
