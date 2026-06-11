@@ -48,7 +48,7 @@ When building with `--features interception-backend`, `interception.dll` must si
 
 ## Settings GUI
 
-Right-clicking the tray and choosing **Settings…** opens a tabbed configuration window. The close button hides the window to the tray; subsequent **Settings…** clicks re-show it.
+Right-clicking the tray and choosing **Settings…** opens a tabbed configuration window. Each click launches a separate short-lived `RustCursor.exe --settings` subprocess, so the GPU-accelerated window's driver overhead is only paid while Settings is open; closing the window exits that subprocess while the tray process keeps running. Edits are signalled back to the parent over a window message, which is why they hot-reload without a restart. Quitting from the tray closes any Settings windows still open.
 
 - **General**: input backend selector (`lowlevel` / `interception`), default monitor diagonal, and an auto-start-at-login toggle that wraps `schtasks` (prompts UAC when the running process isn't already elevated).
 - **Monitors**: drag-to-arrange layout canvas at the top, each monitor drawn at its physical aspect ratio. Edges snap to neighbours within 10 mm; hold **Alt** during a drag to disable snap. A per-monitor numeric diagonal editor sits underneath for typed precision. Size and position edits hot-reload, so cursor crossings reflect changes in real time without a restart.
@@ -74,7 +74,7 @@ Switching backends requires restarting RustCursor. The currently active backend 
 
 ## Monitor physical sizes and layout
 
-The remap math needs each monitor's physical diagonal size to convert pixels to millimetres, plus a `position_mm` for each monitor (the physical top-left in shared world coordinates). A `default_size_in` (inches) applies to every monitor without an explicit override; `position_mm` defaults to a left-to-right cumulative-width walk so monitors touch along their OS-x order with y=0.
+The remap math needs each monitor's physical diagonal size to convert pixels to millimetres, plus a `position_mm` for each monitor (the physical top-left in shared world coordinates). A `default_size_in` (inches) applies to every monitor without an explicit override. `position_mm` defaults to a cumulative walk along the dominant axis of the Windows arrangement: side-by-side layouts touch left-to-right with y=0, vertically stacked layouts touch top-to-bottom with x=0. Mixed grids and L-shapes default to the horizontal walk; arrange those (and any layout where the defaults don't match physical reality) in the Monitors tab.
 
 > **Important: the layout must match Windows Display Settings.** RustCursor only
 > corrects *where the cursor lands* when it crosses an edge that **Windows already
@@ -140,7 +140,8 @@ assets/
   rustcursor-icon.png       embedded in the exe; used for tray + Settings window
   rustcursor-icon.svg       source vector
 src/
-  main.rs                   entry: DPI setup, profile resolution, loop spawn, tray
+  main.rs                   entry: --settings dispatch, DPI setup, profile resolution,
+                            loop spawn, tray
   lib.rs                    exports config, core, and remapper
   config.rs                 TOML config types, active-profile resolution,
                             runtime SIZES + BYPASS lookups (RwLock for live-reload)
@@ -149,9 +150,9 @@ src/
     mod.rs                  Monitor struct (incl. position_mm) and pixel<->mm mapping
     geometry.rs             Point and Rect types
   gui/
-    mod.rs                  single-instance window guard, HWND show/hide,
-                            reload_active_profile (live-reload entry point)
-    app.rs                  eframe App, tab dispatch, window icon, HWND capture
+    mod.rs                  settings-subprocess spawn + entry, parent-reload IPC,
+                            close_settings_windows (tray-quit cleanup)
+    app.rs                  eframe App, tab dispatch, window icon
     autostart.rs            schtasks Create/Delete via ShellExecuteEx + runas
     config_io.rs            toml_edit writer that preserves doc comments
     tabs/
@@ -168,7 +169,7 @@ src/
       lowlevel.rs           WH_MOUSE_LL userspace backend
       focus.rs              fullscreen-game detect + global BYPASS lookup
       layout.rs             WM_DISPLAYCHANGE listener + trigger_monitor_rebuild
-      tray.rs               tray icon, menu (Settings.../Edit bypass.../Quit), pump
+      tray.rs               tray icon, menu (backend status/Settings.../Quit), pump
 ```
 
-Adding Linux support requires only a new `platform/linux/` implementation of the same public surface re-exported from `platform/windows.rs`. The `gui/` tree is already cross-platform (egui + eframe); only the HWND-based show/hide and the schtasks autostart helper need Windows-specific replacements.
+Adding Linux support requires only a new `platform/linux/` implementation of the same public surface re-exported from `platform/windows.rs`. The `gui/` tree is already cross-platform (egui + eframe); only the subprocess-to-parent reload IPC (`FindWindowExW` + `PostMessageW` in `gui/mod.rs`) and the schtasks autostart helper need Windows-specific replacements.
