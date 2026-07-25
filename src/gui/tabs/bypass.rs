@@ -118,3 +118,13 @@ impl BypassTab {
         }
     }
 }
+
+impl crate::gui::tabs::SettingsTab for BypassTab {
+    fn title(&self) -> &'static str {
+        "Bypass"
+    }
+
+    fn show(&mut self, ui: &mut egui::Ui) {
+        self.ui(ui);
+    }
+}

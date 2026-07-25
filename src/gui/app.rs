@@ -4,43 +4,32 @@
 
 use eframe::egui;
 
+use crate::gui::tabs::SettingsTab;
 use crate::gui::tabs::bypass::BypassTab;
 use crate::gui::tabs::general::GeneralTab;
-#[cfg(feature = "log")]
-use crate::gui::tabs::log::LogTab;
 use crate::gui::tabs::monitors::MonitorsTab;
 
-#[derive(Default, Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    #[default]
-    General,
-    Monitors,
-    Bypass,
-    /// Gated with the tab itself: a release build has no `cursor_log.txt` to
-    /// tail, and a tab that can only ever show an error is worse than no tab.
-    #[cfg(feature = "log")]
-    Log,
-}
-
 struct SettingsApp {
-    tab: Tab,
-    general: GeneralTab,
-    monitors: MonitorsTab,
-    bypass: BypassTab,
-    #[cfg(feature = "log")]
-    log: LogTab,
+    /// Tab order as shown in the selector. Fixed for the life of the window.
+    tabs: Vec<Box<dyn SettingsTab>>,
+    active: usize,
 }
 
 impl Default for SettingsApp {
+    /// The tab registry. Adding a tab means one line here, and removing a
+    /// feature-gated one means one `#[cfg]` here plus the module declaration in
+    /// `tabs/mod.rs`.
     fn default() -> Self {
-        Self {
-            tab: Tab::default(),
-            general: GeneralTab::new(),
-            monitors: MonitorsTab::new(),
-            bypass: BypassTab::new(),
+        let tabs: Vec<Box<dyn SettingsTab>> = vec![
+            Box::new(GeneralTab::new()),
+            Box::new(MonitorsTab::new()),
+            Box::new(BypassTab::new()),
+            // A release build has no `cursor_log.txt` to tail, and a tab that
+            // can only ever show an error is worse than no tab.
             #[cfg(feature = "log")]
-            log: LogTab::new(),
-        }
+            Box::new(crate::gui::tabs::log::LogTab::new()),
+        ];
+        Self { tabs, active: 0 }
     }
 }
 
@@ -72,20 +61,16 @@ impl eframe::App for SettingsApp {
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.tab, Tab::General, "General");
-                ui.selectable_value(&mut self.tab, Tab::Monitors, "Monitors");
-                ui.selectable_value(&mut self.tab, Tab::Bypass, "Bypass");
-                #[cfg(feature = "log")]
-                ui.selectable_value(&mut self.tab, Tab::Log, "Log");
+                for (i, tab) in self.tabs.iter().enumerate() {
+                    ui.selectable_value(&mut self.active, i, tab.title());
+                }
             });
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| match self.tab {
-            Tab::General => self.general.ui(ui),
-            Tab::Monitors => self.monitors.ui(ui),
-            Tab::Bypass => self.bypass.ui(ui),
-            #[cfg(feature = "log")]
-            Tab::Log => self.log.ui(ui),
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if let Some(tab) = self.tabs.get_mut(self.active) {
+                tab.show(ui);
+            }
         });
     }
 }

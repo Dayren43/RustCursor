@@ -92,6 +92,11 @@ struct DragState {
 struct View {
     scale: f32,
     origin: egui::Pos2,
+    /// The canvas the scale and origin were fitted to. A drag freezes the fit
+    /// against changing *content* bounds, but the canvas itself can still be
+    /// resized under it (the window resized mid-drag), which has to refit or
+    /// the rectangles are drawn at a scale the canvas no longer has.
+    fitted_to: egui::Rect,
 }
 
 impl View {
@@ -235,9 +240,10 @@ impl MonitorsTab {
         let (canvas_rect, _) =
             ui.allocate_exact_size(egui::vec2(canvas_w, CANVAS_PX_H), egui::Sense::hover());
 
-        // Held still while a drag is in flight, refitted otherwise.
+        // Held still while a drag is in flight, refitted otherwise, and always
+        // refitted if the canvas itself changed size.
         let view = match self.view {
-            Some(v) if self.drag.is_some() => v,
+            Some(v) if self.drag.is_some() && v.fitted_to == canvas_rect => v,
             _ => {
                 let v = fit_view(&self.rows, canvas_rect);
                 self.view = Some(v);
@@ -440,6 +446,16 @@ impl MonitorsTab {
     /// Leaving the committed value alone also keeps the size editor's
     /// modified-guard honest: it still fires on `lost_focus` and does the one
     /// write that edit deserves.
+    ///
+    /// Note the deliberate split this creates: [`MonitorRow::size_mm`], and so
+    /// `apply_snap`, the canvas rectangles and `layout_issues`, all read the
+    /// *live* `size_in`, because previewing a size change is the point of
+    /// editing it. With an uncommitted edit in flight the position is therefore
+    /// snapped against the new diagonal but saved next to the old one, so the
+    /// stored layout is not quite the alignment that was on screen. Reaching it
+    /// needs a keyboard-only size edit followed by a drag, since clicking the
+    /// canvas surrenders focus and commits the size first, on the frame before
+    /// any drag delta arrives.
     fn save_position(&mut self, idx: usize) {
         if self.rows[idx].hwid.is_none() {
             // No HWID -> can't persist; row stays edited in-memory only.
@@ -514,6 +530,7 @@ fn fit_view(rows: &[MonitorRow], canvas_rect: egui::Rect) -> View {
     View {
         scale,
         origin: centre - half_world - egui::vec2(min_x * scale, min_y * scale),
+        fitted_to: canvas_rect,
     }
 }
 
@@ -612,9 +629,11 @@ fn layout_issues(rows: &[MonitorRow]) -> Vec<LayoutIssue> {
 
             // Checked ahead of OS adjacency, because a pair Windows keeps apart
             // can be dragged into each other just as easily as a neighbouring
-            // one. The two findings are mutually exclusive anyway: this needs
-            // cross-axis overlap above the threshold and the adjacency checks
-            // below need it under.
+            // one. While MIN_OVERLAP_MM and MIN_SHARED_EDGE_MM are equal this
+            // finding and the adjacency ones below are mutually exclusive (one
+            // needs cross-axis overlap above the threshold, the others need it
+            // under), so the `continue` is unreachable. It is there so that
+            // lowering MIN_OVERLAP_MM cannot start double-reporting one pair.
             if mm_x_overlap > MIN_OVERLAP_MM && mm_y_overlap > MIN_OVERLAP_MM {
                 issues.push(LayoutIssue {
                     a: i,
@@ -665,6 +684,16 @@ fn layout_issues(rows: &[MonitorRow]) -> Vec<LayoutIssue> {
         }
     }
     issues
+}
+
+impl crate::gui::tabs::SettingsTab for MonitorsTab {
+    fn title(&self) -> &'static str {
+        "Monitors"
+    }
+
+    fn show(&mut self, ui: &mut egui::Ui) {
+        self.ui(ui);
+    }
 }
 
 #[cfg(test)]

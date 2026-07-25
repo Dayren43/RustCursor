@@ -198,3 +198,13 @@ impl GeneralTab {
         }
     }
 }
+
+impl crate::gui::tabs::SettingsTab for GeneralTab {
+    fn title(&self) -> &'static str {
+        "General"
+    }
+
+    fn show(&mut self, ui: &mut egui::Ui) {
+        self.ui(ui);
+    }
+}

@@ -121,3 +121,15 @@ fn open_log_in_editor() {
         );
     }
 }
+
+// No `#[cfg(feature = "log")]` needed: this whole module is already gated on it
+// in `tabs/mod.rs`, which is the point of keeping the impl here.
+impl crate::gui::tabs::SettingsTab for LogTab {
+    fn title(&self) -> &'static str {
+        "Log"
+    }
+
+    fn show(&mut self, ui: &mut egui::Ui) {
+        self.ui(ui);
+    }
+}
