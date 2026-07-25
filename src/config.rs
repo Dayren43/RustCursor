@@ -122,6 +122,9 @@ impl Config {
     /// whole document parses and there are no warnings. On failure each
     /// top-level field is deserialized independently against the syntax tree;
     /// fields that fail keep their default and produce a warning naming them.
+    /// `profile` recurses rather than failing as a unit, so a bad value inside
+    /// one `[[profile.monitor]]` costs only that entry (or only that entry's
+    /// own field) and leaves every sibling's calibration intact.
     fn parse_resilient(s: &str) -> (Self, Vec<String>) {
         match toml::from_str::<Self>(s) {
             Ok(cfg) => (cfg, Vec::new()),
@@ -145,9 +148,7 @@ impl Config {
                     if let Some(v) = field::<f32>(&table, "default_size_in", &mut warnings) {
                         cfg.default_size_in = v;
                     }
-                    if let Some(v) = field::<Vec<Profile>>(&table, "profile", &mut warnings) {
-                        cfg.profiles = v;
-                    }
+                    cfg.profiles = profiles(&table, cfg.default_size_in, &mut warnings);
                     (cfg, warnings)
                 }
                 Err(e) => (
@@ -183,17 +184,124 @@ fn field<T: serde::de::DeserializeOwned>(
     key: &str,
     warnings: &mut Vec<String>,
 ) -> Option<T> {
+    field_at(table, key, key, warnings)
+}
+
+/// [`field`] for a nested table, where `label` is the dotted path to report
+/// (`profile[0].monitor[1].size_in`) so the warning points at one entry rather
+/// than at the whole array.
+fn field_at<T: serde::de::DeserializeOwned>(
+    table: &toml::Table,
+    key: &str,
+    label: &str,
+    warnings: &mut Vec<String>,
+) -> Option<T> {
     let v = table.get(key)?;
     match v.clone().try_into::<T>() {
         Ok(t) => Some(t),
         Err(e) => {
             warnings.push(format!(
-                "`{key}` ignored ({}), default in effect",
+                "`{label}` ignored ({}), default in effect",
                 e.message()
             ));
             None
         }
     }
+}
+
+/// Salvage the `[[profile]]` array one entry at a time. A profile that fails
+/// as a unit is rebuilt field by field, which keeps the rest of its monitors
+/// (and every sibling profile) rather than dropping the whole calibration.
+fn profiles(table: &toml::Table, default_size_in: f32, warnings: &mut Vec<String>) -> Vec<Profile> {
+    let Some(v) = table.get("profile") else {
+        return Vec::new();
+    };
+    if let Ok(ps) = v.clone().try_into::<Vec<Profile>>() {
+        return ps;
+    }
+    let Some(items) = v.as_array() else {
+        warnings
+            .push("`profile` ignored (not an array of tables), no saved layouts in effect".into());
+        return Vec::new();
+    };
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            if let Ok(p) = item.clone().try_into::<Profile>() {
+                return Some(p);
+            }
+            let label = format!("profile[{i}]");
+            let Some(t) = item.as_table() else {
+                warnings.push(format!("`{label}` ignored (not a table)"));
+                return None;
+            };
+            // Without its HWID set the profile can never be selected, so its
+            // monitors would be dead weight either way.
+            let hwids = field_at::<Vec<String>>(t, "hwids", &format!("{label}.hwids"), warnings);
+            let Some(hwids) = hwids else {
+                warnings.push(format!(
+                    "`{label}` ignored: `hwids` missing or invalid, the layout can't be matched"
+                ));
+                return None;
+            };
+            Some(Profile {
+                hwids,
+                description: field_at(t, "description", &format!("{label}.description"), warnings)
+                    .unwrap_or_default(),
+                monitors: profile_monitors(t, &label, default_size_in, warnings),
+            })
+        })
+        .collect()
+}
+
+/// Salvage one profile's `[[profile.monitor]]` array. An entry keeps whichever
+/// of `size_in` and `position_mm` parsed; only a missing or invalid `hwid`
+/// drops it, since nothing else can key it to a physical monitor.
+fn profile_monitors(
+    table: &toml::Table,
+    parent: &str,
+    default_size_in: f32,
+    warnings: &mut Vec<String>,
+) -> Vec<ProfileMonitor> {
+    let Some(v) = table.get("monitor") else {
+        return Vec::new();
+    };
+    if let Ok(ms) = v.clone().try_into::<Vec<ProfileMonitor>>() {
+        return ms;
+    }
+    let Some(items) = v.as_array() else {
+        warnings.push(format!(
+            "`{parent}.monitor` ignored (not an array of tables), calibration lost for this layout"
+        ));
+        return Vec::new();
+    };
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            if let Ok(m) = item.clone().try_into::<ProfileMonitor>() {
+                return Some(m);
+            }
+            let label = format!("{parent}.monitor[{i}]");
+            let hwid = item
+                .as_table()
+                .and_then(|t| t.get("hwid"))
+                .and_then(|h| h.clone().try_into::<String>().ok());
+            let (Some(t), Some(hwid)) = (item.as_table(), hwid) else {
+                warnings.push(format!(
+                    "`{label}` ignored: `hwid` missing or invalid, the entry can't be matched to a monitor"
+                ));
+                return None;
+            };
+            Some(ProfileMonitor {
+                hwid,
+                size_in: field_at(t, "size_in", &format!("{label}.size_in"), warnings)
+                    .unwrap_or(default_size_in),
+                position_mm: field_at(t, "position_mm", &format!("{label}.position_mm"), warnings),
+            })
+        })
+        .collect()
 }
 
 /// Path to the config file: `%LOCALAPPDATA%\RustCursor\config.toml`.
@@ -205,7 +313,7 @@ pub fn path() -> Option<PathBuf> {
 // ── Config-load warnings ───────────────────────────────────────────────────
 // Populated by every `Config::load`; surfaced as a banner in the Settings GUI
 // and in the session header of cursor_log.txt (log builds). Without this a
-// salvaged field would fall back to its default with no visible trace —
+// salvaged field would fall back to its default with no visible trace:
 // `windows_subsystem = "windows"` means stderr goes nowhere.
 
 static LOAD_WARNINGS: RwLock<Vec<String>> = RwLock::new(Vec::new());
@@ -419,6 +527,77 @@ mod tests {
         assert!(cfg.profiles.is_empty());
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("profile"), "warning: {}", warnings[0]);
+    }
+
+    #[test]
+    fn bad_monitor_field_keeps_the_rest_of_the_entry() {
+        // A hand-quoted size_in used to fail the whole `profile` array and
+        // wipe every position_mm in the file.
+        let doc = r#"
+            default_size_in = 24.0
+
+            [[profile]]
+            hwids = ["MONITOR\\AAA1111"]
+
+            [[profile.monitor]]
+            hwid = "MONITOR\\AAA1111"
+            size_in = "31.5"
+            position_mm = [10.0, 20.0]
+        "#;
+        let (cfg, warnings) = Config::parse_resilient(doc);
+        assert_eq!(cfg.profiles.len(), 1);
+        let m = &cfg.profiles[0].monitors[0];
+        assert_eq!(m.position_mm, Some([10.0, 20.0]));
+        assert_eq!(m.size_in, 24.0, "falls back to default_size_in");
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("profile[0].monitor[0].size_in"),
+            "warning should name the entry: {}",
+            warnings[0]
+        );
+    }
+
+    #[test]
+    fn bad_monitor_entry_keeps_its_siblings() {
+        let doc = r#"
+            [[profile]]
+            hwids = ["MONITOR\\AAA1111", "MONITOR\\BBB2222"]
+
+            [[profile.monitor]]
+            size_in = 27.0
+
+            [[profile.monitor]]
+            hwid = "MONITOR\\BBB2222"
+            size_in = 31.5
+            position_mm = [600.0, 0.0]
+        "#;
+        let (cfg, warnings) = Config::parse_resilient(doc);
+        let monitors = &cfg.profiles[0].monitors;
+        assert_eq!(monitors.len(), 1, "only the hwid-less entry is dropped");
+        assert_eq!(monitors[0].hwid, "MONITOR\\BBB2222");
+        assert_eq!(monitors[0].position_mm, Some([600.0, 0.0]));
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("profile[0].monitor[0]"),
+            "warning should name the entry: {}",
+            warnings[0]
+        );
+    }
+
+    #[test]
+    fn bad_profile_keeps_its_siblings() {
+        let doc = format!(
+            "{CALIBRATION}\n[[profile]]\nhwids = \"MONITOR\\\\BBB2222\"\n\n\
+             [[profile.monitor]]\nhwid = \"MONITOR\\\\BBB2222\"\nsize_in = 27.0\n"
+        );
+        let (cfg, warnings) = Config::parse_resilient(&doc);
+        assert_eq!(cfg.profiles.len(), 1, "the valid profile survives");
+        assert_eq!(cfg.profiles[0].monitors[0].position_mm, Some([10.0, 20.0]));
+        assert_eq!(cfg.default_size_in, 24.0);
+        assert!(
+            warnings.iter().any(|w| w.contains("profile[1]")),
+            "warnings should name the bad profile: {warnings:?}"
+        );
     }
 
     #[test]

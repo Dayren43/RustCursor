@@ -159,17 +159,78 @@ fn is_vertical_stack(rects: &[RECT]) -> bool {
     vertical_pairs > horizontal_pairs
 }
 
+/// One monitor's OS rect paired with its physical size in millimetres: the
+/// input to default position seeding.
+struct Panel {
+    rect: RECT,
+    w_mm: f32,
+    h_mm: f32,
+}
+
+impl Panel {
+    fn mm_per_px_x(&self) -> f32 {
+        let px = (self.rect.right - self.rect.left) as f32;
+        if px.abs() < f32::EPSILON {
+            0.0
+        } else {
+            self.w_mm / px
+        }
+    }
+
+    fn mm_per_px_y(&self) -> f32 {
+        let px = (self.rect.bottom - self.rect.top) as f32;
+        if px.abs() < f32::EPSILON {
+            0.0
+        } else {
+            self.h_mm / px
+        }
+    }
+}
+
+/// Seed a default `position_mm` per panel from the OS arrangement, returned
+/// in input order.
+///
+/// The dominant axis (x for side-by-side layouts, y for vertical stacks) is a
+/// cumulative walk in OS order accumulating physical widths or heights, so the
+/// seeded monitors touch regardless of any OS-space gap or overlap. The cross
+/// axis keeps the OS offset the user already arranged, converted to
+/// millimetres through each panel's own px/mm ratio and measured from the
+/// arrangement's top or left edge. A narrower panel centred under a wider one
+/// therefore stays centred instead of collapsing to a shared origin.
+fn seed_positions(panels: &[Panel]) -> Vec<(f32, f32)> {
+    let rects: Vec<RECT> = panels.iter().map(|p| p.rect).collect();
+    let mut order: Vec<usize> = (0..panels.len()).collect();
+    let mut out = vec![(0.0_f32, 0.0_f32); panels.len()];
+    if is_vertical_stack(&rects) {
+        order.sort_by_key(|&i| panels[i].rect.top);
+        let origin_x = rects.iter().map(|r| r.left).min().unwrap_or(0);
+        let mut cum_y_mm = 0.0_f32;
+        for &i in &order {
+            let p = &panels[i];
+            out[i] = ((p.rect.left - origin_x) as f32 * p.mm_per_px_x(), cum_y_mm);
+            cum_y_mm += p.h_mm;
+        }
+    } else {
+        order.sort_by_key(|&i| panels[i].rect.left);
+        let origin_y = rects.iter().map(|r| r.top).min().unwrap_or(0);
+        let mut cum_x_mm = 0.0_f32;
+        for &i in &order {
+            let p = &panels[i];
+            out[i] = (cum_x_mm, (p.rect.top - origin_y) as f32 * p.mm_per_px_y());
+            cum_x_mm += p.w_mm;
+        }
+    }
+    out
+}
+
 /// Enumerate all connected monitors and build the monitor map used by the
 /// remapper. Physical sizes come from `config::size_for(device, hwid)`: the
 /// active profile's per-HWID entry takes precedence, falling back to a
 /// legacy device-keyed `[[monitor]]` entry, then to `default_size_in`.
 ///
-/// Default `position_mm` is seeded by a cumulative walk along the dominant
-/// axis of the OS arrangement: side-by-side layouts walk OS-x order
-/// accumulating physical widths (touching left-to-right, y=0), vertical
-/// stacks walk OS-y order accumulating physical heights (touching
-/// top-to-bottom, x=0). Either way both monitors share the cross-axis
-/// origin until the user pins real positions in the Settings GUI.
+/// Default `position_mm` comes from [`seed_positions`]: the monitors are made
+/// to touch along the arrangement's dominant axis and keep their OS offset on
+/// the cross axis, until the user pins real positions in the Settings GUI.
 /// Profile overrides from `config::position_for` win when present.
 pub fn build_monitor_map() -> HashMap<String, Monitor> {
     struct Tmp {
@@ -179,7 +240,7 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
         h_mm: f32,
     }
 
-    let mut tmps: Vec<Tmp> = enumerate_monitors()
+    let tmps: Vec<Tmp> = enumerate_monitors()
         .into_iter()
         .map(|m| {
             let size_in = rust_cursor::config::size_for(m.hwid.as_deref());
@@ -202,28 +263,19 @@ pub fn build_monitor_map() -> HashMap<String, Monitor> {
         })
         .collect();
 
-    let rects: Vec<RECT> = tmps.iter().map(|t| t.info.rect).collect();
-    let mut defaults: HashMap<String, (f32, f32)> = HashMap::new();
-    if is_vertical_stack(&rects) {
-        tmps.sort_by_key(|t| t.info.rect.top);
-        let mut cum_y_mm = 0.0_f32;
-        for t in &tmps {
-            defaults.insert(t.info.name.clone(), (0.0, cum_y_mm));
-            cum_y_mm += t.h_mm;
-        }
-    } else {
-        tmps.sort_by_key(|t| t.info.rect.left);
-        let mut cum_x_mm = 0.0_f32;
-        for t in &tmps {
-            defaults.insert(t.info.name.clone(), (cum_x_mm, 0.0));
-            cum_x_mm += t.w_mm;
-        }
-    }
+    let panels: Vec<Panel> = tmps
+        .iter()
+        .map(|t| Panel {
+            rect: t.info.rect,
+            w_mm: t.w_mm,
+            h_mm: t.h_mm,
+        })
+        .collect();
+    let defaults = seed_positions(&panels);
 
     let mut map = HashMap::new();
-    for t in tmps {
-        let pos = rust_cursor::config::position_for(t.info.hwid.as_deref())
-            .unwrap_or_else(|| defaults[&t.info.name]);
+    for (i, t) in tmps.into_iter().enumerate() {
+        let pos = rust_cursor::config::position_for(t.info.hwid.as_deref()).unwrap_or(defaults[i]);
         let pixels_w = (t.info.rect.right - t.info.rect.left) as u32;
         let pixels_h = (t.info.rect.bottom - t.info.rect.top) as u32;
         let aspect_ratio = pixels_w as f32 / pixels_h as f32;
@@ -301,6 +353,48 @@ mod tests {
             rect(0, 0, 2560, 1440),
             rect(2560, 1440, 4480, 2520),
         ]));
+    }
+
+    fn panel(rect: RECT, w_mm: f32, h_mm: f32) -> Panel {
+        Panel { rect, w_mm, h_mm }
+    }
+
+    #[test]
+    fn lone_monitor_seeds_at_the_origin() {
+        let seeded = seed_positions(&[panel(rect(0, 0, 2560, 1440), 600.0, 337.5)]);
+        assert_eq!(seeded, vec![(0.0, 0.0)]);
+    }
+
+    #[test]
+    fn stack_keeps_the_os_horizontal_offset() {
+        // 1920-wide panel centred under a 2560-wide one: 320 px of OS offset
+        // at 0.25 mm/px is 80 mm of physical offset, not a shared origin.
+        let seeded = seed_positions(&[
+            panel(rect(0, 0, 2560, 1440), 600.0, 337.5),
+            panel(rect(320, 1440, 2240, 2520), 480.0, 270.0),
+        ]);
+        assert_eq!(seeded, vec![(0.0, 0.0), (80.0, 337.5)]);
+    }
+
+    #[test]
+    fn side_by_side_keeps_the_os_vertical_offset() {
+        let seeded = seed_positions(&[
+            panel(rect(0, 0, 2560, 1440), 600.0, 337.5),
+            panel(rect(2560, 120, 4480, 1200), 480.0, 270.0),
+        ]);
+        assert_eq!(seeded, vec![(0.0, 0.0), (600.0, 30.0)]);
+    }
+
+    #[test]
+    fn seeding_is_independent_of_input_order_and_sign() {
+        // Bottom panel listed first, arrangement extending left of x=0: the
+        // cross axis is measured from the leftmost edge, and results come
+        // back in input order.
+        let seeded = seed_positions(&[
+            panel(rect(-320, 1440, 1600, 2520), 480.0, 270.0),
+            panel(rect(0, 0, 2560, 1440), 600.0, 337.5),
+        ]);
+        assert_eq!(seeded, vec![(0.0, 337.5), (75.0, 0.0)]);
     }
 
     #[test]
