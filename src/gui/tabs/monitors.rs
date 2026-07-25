@@ -43,6 +43,11 @@ const CANVAS_PX_H: f32 = 220.0;
 /// count as having a usable shared physical edge. Below this every crossing
 /// at the pair's pixel boundary pins to the source monitor.
 const MIN_SHARED_EDGE_MM: f32 = 5.0;
+/// Minimum overlap on *both* axes in millimetres before a pair is called out as
+/// occupying the same physical space. The few mm of slack keep hand-measured
+/// diagonals and snap rounding from tripping the warning on panels that are
+/// merely touching.
+const MIN_OVERLAP_MM: f32 = 5.0;
 
 struct MonitorRow {
     device: String,
@@ -70,10 +75,39 @@ impl MonitorRow {
     }
 }
 
+/// An in-progress canvas drag. `raw_mm` is where the pointer has actually
+/// dragged to, before snap. The row's own `position_mm` is that value with snap
+/// applied, and the two are deliberately kept apart: folding each snap
+/// correction back into the value the next frame's delta accumulates onto makes
+/// the rectangle drift from the pointer by the running sum of every correction,
+/// and makes leaving a snapped edge feel sticky.
+struct DragState {
+    idx: usize,
+    raw_mm: (f32, f32),
+}
+
+/// The canvas view transform: millimetres-to-pixels scale, plus the screen
+/// position of world (0, 0).
+#[derive(Clone, Copy)]
+struct View {
+    scale: f32,
+    origin: egui::Pos2,
+}
+
+impl View {
+    fn to_screen(self, wx: f32, wy: f32) -> egui::Pos2 {
+        self.origin + egui::vec2(wx * self.scale, wy * self.scale)
+    }
+}
+
 pub struct MonitorsTab {
     rows: Vec<MonitorRow>,
     default_size_in: f32,
     last_error: Option<String>,
+    drag: Option<DragState>,
+    /// Cached so it can be held still for the duration of a drag; see
+    /// [`fit_view`]. `None` means "recompute on the next frame".
+    view: Option<View>,
 }
 
 impl MonitorsTab {
@@ -82,6 +116,8 @@ impl MonitorsTab {
             rows: Vec::new(),
             default_size_in: 27.0,
             last_error: None,
+            drag: None,
+            view: None,
         };
         tab.refresh();
         tab
@@ -114,6 +150,10 @@ impl MonitorsTab {
         rows.sort_by_key(|r| r.os_x);
         self.rows = rows;
         self.last_error = None;
+        // Row indices just changed, so any in-flight drag state and the fitted
+        // view both refer to the old set.
+        self.drag = None;
+        self.view = None;
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -195,43 +235,28 @@ impl MonitorsTab {
         let (canvas_rect, _) =
             ui.allocate_exact_size(egui::vec2(canvas_w, CANVAS_PX_H), egui::Sense::hover());
 
-        // Compute world bounds across all monitor rectangles.
-        let mut min_x = f32::INFINITY;
-        let mut min_y = f32::INFINITY;
-        let mut max_x = f32::NEG_INFINITY;
-        let mut max_y = f32::NEG_INFINITY;
-        for r in &self.rows {
-            let (w, h) = r.size_mm();
-            min_x = min_x.min(r.position_mm.0);
-            min_y = min_y.min(r.position_mm.1);
-            max_x = max_x.max(r.position_mm.0 + w);
-            max_y = max_y.max(r.position_mm.1 + h);
-        }
-        let world_w = (max_x - min_x).max(1.0);
-        let world_h = (max_y - min_y).max(1.0);
-
-        let pad = 16.0;
-        let scale_x = (canvas_rect.width() - 2.0 * pad) / world_w;
-        let scale_y = (canvas_rect.height() - 2.0 * pad) / world_h;
-        let scale = scale_x.min(scale_y).max(0.001);
-
-        let centre = canvas_rect.center();
-        let half_world = egui::vec2(world_w * scale * 0.5, world_h * scale * 0.5);
-        let world_origin = centre - half_world - egui::vec2(min_x * scale, min_y * scale);
-        let world_to_screen =
-            |wx: f32, wy: f32| -> egui::Pos2 { world_origin + egui::vec2(wx * scale, wy * scale) };
+        // Held still while a drag is in flight, refitted otherwise.
+        let view = match self.view {
+            Some(v) if self.drag.is_some() => v,
+            _ => {
+                let v = fit_view(&self.rows, canvas_rect);
+                self.view = Some(v);
+                v
+            }
+        };
 
         let painter = ui.painter_at(canvas_rect);
         painter.rect_filled(canvas_rect, 4.0, ui.style().visuals.extreme_bg_color);
 
         let alt_held = ui.input(|i| i.modifiers.alt);
         let mut drag_deltas: Vec<(usize, egui::Vec2)> = Vec::new();
+        let mut started: Option<usize> = None;
         let mut stopped: Option<usize> = None;
 
         for (i, r) in self.rows.iter().enumerate() {
             let (w_mm, h_mm) = r.size_mm();
-            let p0 = world_to_screen(r.position_mm.0, r.position_mm.1);
-            let p1 = world_to_screen(r.position_mm.0 + w_mm, r.position_mm.1 + h_mm);
+            let p0 = view.to_screen(r.position_mm.0, r.position_mm.1);
+            let p1 = view.to_screen(r.position_mm.0 + w_mm, r.position_mm.1 + h_mm);
             let screen_rect = egui::Rect::from_two_pos(p0, p1);
 
             let id = ui.id().with(("layout_monitor", i));
@@ -259,26 +284,59 @@ impl MonitorsTab {
                 egui::Color32::WHITE,
             );
 
+            if resp.drag_started() {
+                started = Some(i);
+            }
             if resp.dragged() {
                 let dp = resp.drag_delta();
-                drag_deltas.push((i, egui::vec2(dp.x / scale, dp.y / scale)));
+                drag_deltas.push((i, egui::vec2(dp.x / view.scale, dp.y / view.scale)));
             }
             if resp.drag_stopped() {
                 stopped = Some(i);
             }
         }
 
+        // Seed the unsnapped position from wherever the row currently sits, so
+        // a second drag of the same row doesn't resume from a stale `raw_mm`.
+        if let Some(idx) = started {
+            self.drag = Some(DragState {
+                idx,
+                raw_mm: self.rows[idx].position_mm,
+            });
+        }
+
         for (idx, delta_mm) in drag_deltas {
-            self.rows[idx].position_mm.0 += delta_mm.x;
-            self.rows[idx].position_mm.1 += delta_mm.y;
+            // `drag_started` can be missed (a press that began before this tab
+            // was drawn), so seed lazily too.
+            if self.drag.as_ref().is_none_or(|d| d.idx != idx) {
+                self.drag = Some(DragState {
+                    idx,
+                    raw_mm: self.rows[idx].position_mm,
+                });
+            }
+            let raw = {
+                let d = self.drag.as_mut().expect("seeded just above");
+                d.raw_mm.0 += delta_mm.x;
+                d.raw_mm.1 += delta_mm.y;
+                d.raw_mm
+            };
+            // Snap decides what is displayed and saved; `raw_mm` keeps
+            // accumulating the pointer's own path underneath it.
+            self.rows[idx].position_mm = raw;
             if !alt_held {
                 apply_snap(&mut self.rows, idx);
             }
             // No in-drag cross-process push: the parent's runtime SIZES are
-            // updated on drag-end via `save_position` → ConfigDoc write →
+            // updated on drag-end via `save_position` -> ConfigDoc write ->
             // `gui::reload_active_profile`, which posts the IPC reload signal.
             // The canvas's drag preview is purely local (paints from
             // `row.position_mm`), so the user still sees the rectangle move.
+        }
+
+        if stopped.is_some() {
+            self.drag = None;
+            // Refit to the arrangement the drag ended on.
+            self.view = None;
         }
 
         stopped
@@ -372,8 +430,16 @@ impl MonitorsTab {
 
     /// Persist the layout after a drag ends. Writes every row with a HWID,
     /// not just the dragged one, so the profile is always a complete snapshot
-    /// in one coordinate basis — pinning only the dragged monitor would leave
+    /// in one coordinate basis: pinning only the dragged monitor would leave
     /// the others default-seeded against a layout that no longer matches.
+    ///
+    /// Diagonals are written from `initial_size_in`, the last committed value,
+    /// not from the live `size_in`. A drag that happens while a Diagonal field
+    /// still has focus would otherwise persist a half-typed number, and for
+    /// every row at that, since `upsert_profile_monitor` always writes a size.
+    /// Leaving the committed value alone also keeps the size editor's
+    /// modified-guard honest: it still fires on `lost_focus` and does the one
+    /// write that edit deserves.
     fn save_position(&mut self, idx: usize) {
         if self.rows[idx].hwid.is_none() {
             // No HWID -> can't persist; row stays edited in-memory only.
@@ -396,7 +462,7 @@ impl MonitorsTab {
                 doc.upsert_profile_monitor(
                     &connected_hwids,
                     hwid,
-                    row.size_in,
+                    row.initial_size_in,
                     Some(row.position_mm),
                     &description,
                 );
@@ -414,6 +480,40 @@ impl MonitorsTab {
             }
             Err(e) => self.last_error = Some(e),
         }
+    }
+}
+
+/// Fit every rectangle into `canvas_rect` with padding.
+///
+/// The caller holds the result still for the duration of a drag. Refitting
+/// mid-drag means the bounding box grows as a monitor is pulled outward, which
+/// shrinks and re-centres the whole canvas under the pointer, so the rectangle
+/// being dragged slides away from the cursor that is holding it.
+fn fit_view(rows: &[MonitorRow], canvas_rect: egui::Rect) -> View {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for r in rows {
+        let (w, h) = r.size_mm();
+        min_x = min_x.min(r.position_mm.0);
+        min_y = min_y.min(r.position_mm.1);
+        max_x = max_x.max(r.position_mm.0 + w);
+        max_y = max_y.max(r.position_mm.1 + h);
+    }
+    let world_w = (max_x - min_x).max(1.0);
+    let world_h = (max_y - min_y).max(1.0);
+
+    let pad = 16.0;
+    let scale_x = (canvas_rect.width() - 2.0 * pad) / world_w;
+    let scale_y = (canvas_rect.height() - 2.0 * pad) / world_h;
+    let scale = scale_x.min(scale_y).max(0.001);
+
+    let centre = canvas_rect.center();
+    let half_world = egui::vec2(world_w * scale * 0.5, world_h * scale * 0.5);
+    View {
+        scale,
+        origin: centre - half_world - egui::vec2(min_x * scale, min_y * scale),
     }
 }
 
@@ -488,14 +588,44 @@ struct LayoutIssue {
 /// panel there (see `remap_transition`). So a Windows-adjacent pair with no
 /// cross-axis mm overlap is unreachable from each other: flag it.
 ///
-/// Deliberately not flagged: in-plane order disagreeing with Windows (the
-/// remapper never consults it on that axis) and partial overlaps (modelling
-/// offset panels is the point of the app).
+/// Also flagged: a pair overlapping on both axes, which is physically
+/// impossible. That one costs nothing in the remapper (a horizontal crossing
+/// takes its x from the raw landing pixel and only range-checks world y, so
+/// in-plane overlap never enters the math), but it is always a mistake in the
+/// measurements, and a buried rectangle is awkward to grab in the canvas.
+///
+/// Deliberately not flagged: in-plane order disagreeing with Windows, which the
+/// remapper never consults on that axis, and partial single-axis overlap, since
+/// modelling offset panels is the point of the app.
 fn layout_issues(rows: &[MonitorRow]) -> Vec<LayoutIssue> {
     let mut issues = Vec::new();
     for i in 0..rows.len() {
         for j in (i + 1)..rows.len() {
             let (a, b) = (&rows[i], &rows[j]);
+
+            let (a_w_mm, a_h_mm) = a.size_mm();
+            let (b_w_mm, b_h_mm) = b.size_mm();
+            let mm_x_overlap = (a.position_mm.0 + a_w_mm).min(b.position_mm.0 + b_w_mm)
+                - a.position_mm.0.max(b.position_mm.0);
+            let mm_y_overlap = (a.position_mm.1 + a_h_mm).min(b.position_mm.1 + b_h_mm)
+                - a.position_mm.1.max(b.position_mm.1);
+
+            // Checked ahead of OS adjacency, because a pair Windows keeps apart
+            // can be dragged into each other just as easily as a neighbouring
+            // one. The two findings are mutually exclusive anyway: this needs
+            // cross-axis overlap above the threshold and the adjacency checks
+            // below need it under.
+            if mm_x_overlap > MIN_OVERLAP_MM && mm_y_overlap > MIN_OVERLAP_MM {
+                issues.push(LayoutIssue {
+                    a: i,
+                    b: j,
+                    message: format!(
+                        "{} and {} overlap by {:.0} x {:.0} mm; two panels can't share the same physical space, and the one underneath is hard to grab here.",
+                        a.device, b.device, mm_x_overlap, mm_y_overlap
+                    ),
+                });
+                continue;
+            }
 
             let (ax0, ay0) = (a.os_x as i64, a.os_y as i64);
             let (ax1, ay1) = (ax0 + a.resolution.0 as i64, ay0 + a.resolution.1 as i64);
@@ -513,13 +643,6 @@ fn layout_issues(rows: &[MonitorRow]) -> Vec<LayoutIssue> {
             if !side_by_side && !stacked {
                 continue;
             }
-
-            let (a_w_mm, a_h_mm) = a.size_mm();
-            let (b_w_mm, b_h_mm) = b.size_mm();
-            let mm_x_overlap = (a.position_mm.0 + a_w_mm).min(b.position_mm.0 + b_w_mm)
-                - a.position_mm.0.max(b.position_mm.0);
-            let mm_y_overlap = (a.position_mm.1 + a_h_mm).min(b.position_mm.1 + b_h_mm)
-                - a.position_mm.1.max(b.position_mm.1);
 
             let message = if side_by_side && mm_y_overlap < MIN_SHARED_EDGE_MM {
                 format!(
@@ -568,6 +691,58 @@ mod tests {
         let rows = vec![
             row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
             row("B", 1920, 0, (1920, 1080), (600.0, 0.0)),
+        ];
+        assert!(layout_issues(&rows).is_empty());
+    }
+
+    /// A 27" panel is ~597.9 x ~336.3 mm, so B at x=300 buries ~298 mm of A.
+    #[test]
+    fn overlapping_panels_are_flagged() {
+        let rows = vec![
+            row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
+            row("B", 1920, 0, (1920, 1080), (300.0, 0.0)),
+        ];
+        let issues = layout_issues(&rows);
+        assert_eq!(issues.len(), 1);
+        assert!(
+            issues[0].message.contains("overlap by"),
+            "{}",
+            issues[0].message
+        );
+        // Not the adjacency finding, which would be wrong here: these two do
+        // share a usable vertical edge.
+        assert!(
+            !issues[0].message.contains("blocked"),
+            "overlap must not claim crossings break: {}",
+            issues[0].message
+        );
+    }
+
+    /// Overlap is a measurement error whether or not Windows has the pair
+    /// adjacent, so the check runs ahead of the adjacency gate. These two sit
+    /// 80 px apart in the OS arrangement, touching on neither axis.
+    #[test]
+    fn overlap_is_flagged_even_when_windows_keeps_the_pair_apart() {
+        let rows = vec![
+            row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
+            row("B", 2000, 0, (1920, 1080), (100.0, 100.0)),
+        ];
+        let issues = layout_issues(&rows);
+        assert_eq!(issues.len(), 1);
+        assert!(
+            issues[0].message.contains("overlap by"),
+            "{}",
+            issues[0].message
+        );
+    }
+
+    /// Touching panels, and a couple of mm of measurement slop past touching,
+    /// stay quiet: 597.9 mm wide starting at x=595 is only ~2.9 mm of overlap.
+    #[test]
+    fn touching_panels_are_not_flagged_as_overlapping() {
+        let rows = vec![
+            row("A", 0, 0, (1920, 1080), (0.0, 0.0)),
+            row("B", 1920, 0, (1920, 1080), (595.0, 0.0)),
         ];
         assert!(layout_issues(&rows).is_empty());
     }
