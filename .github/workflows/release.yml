@@ -66,16 +66,18 @@ jobs:
           git commit -m "chore: release v${{ steps.version.outputs.version }}"
           git tag -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
 
-      # main first: it is a plain fast-forward push, so it is the step that
-      # fails if someone committed straight to main. Failing here leaves
-      # nothing public to clean up, whereas the same failure after the tag
-      # push leaves a tag with no release behind it.
-      - name: Push main, develop, and the tag
+      # One atomic push, so no ordering of these three refs can leave a partial
+      # release behind. develop:main is a plain fast-forward and fails outright
+      # if anything was committed straight to main; without --atomic that
+      # failure would strand whichever refs had already gone up, and every
+      # ordering just moves which ones those are.
+      - name: Push develop, main, and the tag
         shell: bash
         run: |
-          git push origin develop:main
-          git push origin develop
-          git push origin "v${{ steps.version.outputs.version }}"
+          git push --atomic origin \
+            develop \
+            develop:main \
+            "refs/tags/v${{ steps.version.outputs.version }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -169,21 +169,15 @@ struct Panel {
 
 impl Panel {
     fn mm_per_px_x(&self) -> f32 {
+        // A whole pixel count, so this is the degenerate zero-width case, not
+        // a float-comparison epsilon.
         let px = (self.rect.right - self.rect.left) as f32;
-        if px.abs() < f32::EPSILON {
-            0.0
-        } else {
-            self.w_mm / px
-        }
+        if px == 0.0 { 0.0 } else { self.w_mm / px }
     }
 
     fn mm_per_px_y(&self) -> f32 {
         let px = (self.rect.bottom - self.rect.top) as f32;
-        if px.abs() < f32::EPSILON {
-            0.0
-        } else {
-            self.h_mm / px
-        }
+        if px == 0.0 { 0.0 } else { self.h_mm / px }
     }
 }
 

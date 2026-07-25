@@ -241,10 +241,11 @@ fn land_across_y(
     )
 }
 
-/// Shared exit for every corrected position: a target within a pixel of the raw
-/// event is not worth swallowing the event and injecting a `SetCursorPos` for.
+/// Shared exit for every corrected position: a target the raw event already
+/// lands on is not worth swallowing the event and injecting a `SetCursorPos`
+/// for. These are whole pixels, so this is equality, not a tolerance.
 fn correction(new_x: i32, new_y: i32, tx: i32, ty: i32) -> Option<(i32, i32)> {
-    if (tx - new_x).abs() < 1 && (ty - new_y).abs() < 1 {
+    if tx == new_x && ty == new_y {
         None
     } else {
         Some((tx, ty))
@@ -289,6 +290,11 @@ pub fn remap_transition(
                 .and_then(|e| dest_across_y(new_y, e, old_mon, monitors))
                 .map(|dest| land_across_y(old_x, old_y, new_y, old_mon, dest));
 
+            // Not a fallback chain: `or` short-circuits on `Some(Blocked)` too,
+            // so a preferred axis that found a destination and then rejected it
+            // on world coordinates deliberately wins over a valid landing on
+            // the other axis. Falling through would send the cursor to the
+            // neighbour it was not heading for.
             match if prefer_x {
                 across_x.or(across_y)
             } else {

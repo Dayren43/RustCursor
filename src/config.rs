@@ -237,11 +237,17 @@ fn profiles(table: &toml::Table, default_size_in: f32, warnings: &mut Vec<String
                 return None;
             };
             // Without its HWID set the profile can never be selected, so its
-            // monitors would be dead weight either way.
-            let hwids = field_at::<Vec<String>>(t, "hwids", &format!("{label}.hwids"), warnings);
+            // monitors would be dead weight either way. Parsed inline rather
+            // than through `field_at`: that reports a salvaged field with a
+            // default standing in, and there is no default for `hwids`, so both
+            // the missing and the ill-typed case get one accurate warning here
+            // instead of a generic one plus this.
+            let hwids = t
+                .get("hwids")
+                .and_then(|v| v.clone().try_into::<Vec<String>>().ok());
             let Some(hwids) = hwids else {
                 warnings.push(format!(
-                    "`{label}` ignored: `hwids` missing or invalid, the layout can't be matched"
+                    "`{label}` ignored: `hwids` is missing or not a list of strings, so the layout can't be matched"
                 ));
                 return None;
             };
@@ -594,9 +600,17 @@ mod tests {
         assert_eq!(cfg.profiles.len(), 1, "the valid profile survives");
         assert_eq!(cfg.profiles[0].monitors[0].position_mm, Some([10.0, 20.0]));
         assert_eq!(cfg.default_size_in, 24.0);
+        // Exactly one line, not a generic `hwids` salvage warning plus the
+        // profile-dropped one: a single typo should not fill the banner twice.
+        let named: Vec<&String> = warnings
+            .iter()
+            .filter(|w| w.contains("profile[1]"))
+            .collect();
+        assert_eq!(named.len(), 1, "one warning per bad profile: {warnings:?}");
         assert!(
-            warnings.iter().any(|w| w.contains("profile[1]")),
-            "warnings should name the bad profile: {warnings:?}"
+            named[0].contains("hwids"),
+            "warning should name the field: {}",
+            named[0]
         );
     }
 
