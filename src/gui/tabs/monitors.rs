@@ -276,10 +276,13 @@ impl MonitorsTab {
                 egui::Color32::from_rgb(45, 60, 90)
             };
             painter.rect_filled(screen_rect, 4.0, fill);
+            // Widths are suffixed because `Stroke::new` takes `impl Into<f32>`:
+            // a bare literal has no inferable type there and rustc falls back
+            // to f32, which is a future-incompatibility error on newer stable.
             let stroke = if flagged.get(i).copied().unwrap_or(false) {
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 90, 90))
+                egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(220, 90, 90))
             } else {
-                egui::Stroke::new(1.0, egui::Color32::from_gray(220))
+                egui::Stroke::new(1.0_f32, egui::Color32::from_gray(220))
             };
             painter.rect_stroke(screen_rect, 4.0, stroke);
             painter.text(
