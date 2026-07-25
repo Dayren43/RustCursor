@@ -12,23 +12,117 @@ pub fn monitor_at_pixel(x: i32, y: i32, monitors: &HashMap<String, Monitor>) -> 
     })
 }
 
-/// Find a monitor whose X-span includes `x`, regardless of Y.
-/// Used for gap-zone crossings where the raw destination y is outside the
-/// target monitor's OS y-range due to different per-monitor y-offsets.
-pub fn monitor_for_x(x: i32, monitors: &HashMap<String, Monitor>) -> Option<&Monitor> {
-    monitors
-        .values()
-        .find(|m| x >= m.bounds.x as i32 && x < (m.bounds.x + m.bounds.w) as i32)
+/// The source edge a raw destination coordinate fell outside of, on one axis.
+struct Exit {
+    /// The right (or bottom) edge when true, the left (or top) edge when false.
+    forward: bool,
+    /// Pixels past that edge, always >= 1.
+    px: i32,
 }
 
-/// Find a monitor whose Y-span includes `y`, regardless of X. The vertical
-/// twin of [`monitor_for_x`]: used for gap-zone crossings between
-/// vertically-stacked monitors whose OS x-offsets differ, where the raw
-/// destination x is outside the target monitor's OS x-range.
-pub fn monitor_for_y(y: i32, monitors: &HashMap<String, Monitor>) -> Option<&Monitor> {
+/// Which of the source's vertical edges `x` fell outside of. `None` when `x` is
+/// still inside the source's x-span, meaning the cursor did not leave through a
+/// vertical edge and x is not the axis being crossed.
+fn exit_x(x: i32, src: &Monitor) -> Option<Exit> {
+    let left = src.bounds.x as i32;
+    let right = (src.bounds.x + src.bounds.w) as i32;
+    if x >= right {
+        Some(Exit {
+            forward: true,
+            px: x - right + 1,
+        })
+    } else if x < left {
+        Some(Exit {
+            forward: false,
+            px: left - x,
+        })
+    } else {
+        None
+    }
+}
+
+/// Horizontal twin of [`exit_x`]: which of the source's horizontal edges `y`
+/// fell outside of.
+fn exit_y(y: i32, src: &Monitor) -> Option<Exit> {
+    let top = src.bounds.y as i32;
+    let bottom = (src.bounds.y + src.bounds.h) as i32;
+    if y >= bottom {
+        Some(Exit {
+            forward: true,
+            px: y - bottom + 1,
+        })
+    } else if y < top {
+        Some(Exit {
+            forward: false,
+            px: top - y,
+        })
+    } else {
+        None
+    }
+}
+
+/// The monitor a horizontal gap-zone crossing lands on: its OS x-span contains
+/// `x`, and it sits beyond the source edge the cursor left through. That side
+/// check is what keeps a monitor merely *overlapping* the source in x (a
+/// vertical neighbour) from being treated as a horizontal destination.
+///
+/// Nearest edge wins and `identifier` breaks ties, so the pick is the same on
+/// every run: `HashMap` iteration order is not stable, and a bare `find` could
+/// send the cursor to a different monitor each time the binary starts.
+fn dest_across_x<'a>(
+    x: i32,
+    exit: &Exit,
+    src: &Monitor,
+    monitors: &'a HashMap<String, Monitor>,
+) -> Option<&'a Monitor> {
+    let src_left = src.bounds.x as i32;
+    let src_right = (src.bounds.x + src.bounds.w) as i32;
+    let gap = |m: &Monitor| {
+        if exit.forward {
+            m.bounds.x as i32 - src_right
+        } else {
+            src_left - (m.bounds.x + m.bounds.w) as i32
+        }
+    };
     monitors
         .values()
-        .find(|m| y >= m.bounds.y as i32 && y < (m.bounds.y + m.bounds.h) as i32)
+        .filter(|m| m.identifier != src.identifier)
+        .filter(|m| x >= m.bounds.x as i32 && x < (m.bounds.x + m.bounds.w) as i32)
+        .filter(|m| gap(m) >= 0)
+        .min_by(|a, b| {
+            gap(a)
+                .cmp(&gap(b))
+                .then_with(|| a.identifier.cmp(&b.identifier))
+        })
+}
+
+/// Vertical twin of [`dest_across_x`], for crossings between stacked monitors
+/// whose OS x-offsets differ.
+fn dest_across_y<'a>(
+    y: i32,
+    exit: &Exit,
+    src: &Monitor,
+    monitors: &'a HashMap<String, Monitor>,
+) -> Option<&'a Monitor> {
+    let src_top = src.bounds.y as i32;
+    let src_bottom = (src.bounds.y + src.bounds.h) as i32;
+    let gap = |m: &Monitor| {
+        if exit.forward {
+            m.bounds.y as i32 - src_bottom
+        } else {
+            src_top - (m.bounds.y + m.bounds.h) as i32
+        }
+    };
+    monitors
+        .values()
+        .filter(|m| m.identifier != src.identifier)
+        .filter(|m| y >= m.bounds.y as i32 && y < (m.bounds.y + m.bounds.h) as i32)
+        .filter(|m| gap(m) >= 0)
+        .min_by(|a, b| {
+            gap(a)
+                .cmp(&gap(b))
+                .then_with(|| a.identifier.cmp(&b.identifier))
+        })
 }
 
 /// Pin a cursor position to source monitor bounds in OS pixel space. Used to
@@ -52,6 +146,111 @@ fn pin_to_source(old_mon: &Monitor, new_x: i32, new_y: i32) -> Option<(i32, i32)
     }
 }
 
+/// Where a gap-zone crossing puts the cursor.
+enum Landing {
+    /// Remap to this OS pixel position on the destination.
+    At(i32, i32),
+    /// The destination has no panel at the source's world coordinate, so the
+    /// user's layout shares no edge here.
+    Blocked,
+}
+
+/// Land a horizontal gap-zone crossing. Source-local mm -> shared world mm ->
+/// destination-local mm, so the cursor keeps its world height regardless of the
+/// two monitors' physical y-offsets.
+fn land_across_x(
+    old_x: i32,
+    old_y: i32,
+    new_x: i32,
+    old_mon: &Monitor,
+    dest_mon: &Monitor,
+) -> Landing {
+    let old_local_y = cursor_mapper::to_physical(
+        Point {
+            x: old_x as f32,
+            y: old_y as f32,
+        },
+        old_mon,
+    )
+    .y;
+    let world_y = old_mon.position_mm.y + old_local_y;
+    let (_, dest_h_mm) = dest_mon.physical_size_mm();
+    let dest_world_top = dest_mon.position_mm.y;
+    if world_y < dest_world_top || world_y > dest_world_top + dest_h_mm {
+        return Landing::Blocked;
+    }
+    let target_os_y = cursor_mapper::to_os_pos(
+        Point {
+            x: 0.0,
+            y: world_y - dest_world_top,
+        },
+        dest_mon,
+    )
+    .y;
+    Landing::At(
+        new_x.clamp(
+            dest_mon.bounds.x as i32,
+            (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
+        ),
+        (target_os_y as i32).clamp(
+            dest_mon.bounds.y as i32,
+            (dest_mon.bounds.y + dest_mon.bounds.h - 1.0) as i32,
+        ),
+    )
+}
+
+/// Vertical twin of [`land_across_x`]: preserves world x instead of world y.
+fn land_across_y(
+    old_x: i32,
+    old_y: i32,
+    new_y: i32,
+    old_mon: &Monitor,
+    dest_mon: &Monitor,
+) -> Landing {
+    let old_local_x = cursor_mapper::to_physical(
+        Point {
+            x: old_x as f32,
+            y: old_y as f32,
+        },
+        old_mon,
+    )
+    .x;
+    let world_x = old_mon.position_mm.x + old_local_x;
+    let (dest_w_mm, _) = dest_mon.physical_size_mm();
+    let dest_world_left = dest_mon.position_mm.x;
+    if world_x < dest_world_left || world_x > dest_world_left + dest_w_mm {
+        return Landing::Blocked;
+    }
+    let target_os_x = cursor_mapper::to_os_pos(
+        Point {
+            x: world_x - dest_world_left,
+            y: 0.0,
+        },
+        dest_mon,
+    )
+    .x;
+    Landing::At(
+        (target_os_x as i32).clamp(
+            dest_mon.bounds.x as i32,
+            (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
+        ),
+        new_y.clamp(
+            dest_mon.bounds.y as i32,
+            (dest_mon.bounds.y + dest_mon.bounds.h - 1.0) as i32,
+        ),
+    )
+}
+
+/// Shared exit for every corrected position: a target within a pixel of the raw
+/// event is not worth swallowing the event and injecting a `SetCursorPos` for.
+fn correction(new_x: i32, new_y: i32, tx: i32, ty: i32) -> Option<(i32, i32)> {
+    if (tx - new_x).abs() < 1 && (ty - new_y).abs() < 1 {
+        None
+    } else {
+        Some((tx, ty))
+    }
+}
+
 /// Compute the corrected cursor position when crossing a monitor boundary.
 ///
 /// Returns `Some((x, y))` when a correction is needed, `None` when the raw
@@ -69,99 +268,38 @@ pub fn remap_transition(
     match new_mon {
         // ── Gap crossing: no monitor at raw destination ──────────────────
         None => {
-            // If new_x falls in a *different* monitor's x-span, this is a gap-zone
-            // crossing (the monitors have different OS y-offsets). Use physical-space
-            // y to find the correct landing row instead of clamping the raw pixel.
-            if let Some(dest_mon) =
-                monitor_for_x(new_x, monitors).filter(|m| m.identifier != old_mon.identifier)
-            {
-                let old_local_y = cursor_mapper::to_physical(
-                    Point {
-                        x: old_x as f32,
-                        y: old_y as f32,
-                    },
-                    old_mon,
-                )
-                .y;
-                // Map source-local mm -> shared world mm -> destination-local mm
-                // so the cursor lands at the same world height regardless of the
-                // two monitors' physical y-offsets.
-                let world_y = old_mon.position_mm.y + old_local_y;
-                let (_, dest_h_mm) = dest_mon.physical_size_mm();
-                let dest_world_top = dest_mon.position_mm.y;
-                let dest_world_bottom = dest_world_top + dest_h_mm;
-                if world_y < dest_world_top || world_y > dest_world_bottom {
-                    // Destination doesn't physically exist at this world height
-                    // (user-defined layout has the source extending above or
-                    // below the destination). Block the crossing.
-                    return pin_to_source(old_mon, new_x, new_y);
-                }
-                let target_local_y = world_y - dest_mon.position_mm.y;
-                let target_os_y = cursor_mapper::to_os_pos(
-                    Point {
-                        x: 0.0,
-                        y: target_local_y,
-                    },
-                    dest_mon,
-                )
-                .y;
-                let tx = new_x.clamp(
-                    dest_mon.bounds.x as i32,
-                    (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
-                );
-                let ty = (target_os_y as i32).clamp(
-                    dest_mon.bounds.y as i32,
-                    (dest_mon.bounds.y + dest_mon.bounds.h - 1.0) as i32,
-                );
-                return Some((tx, ty));
-            }
+            // The raw destination is in no monitor's rect, so the cursor left
+            // through one of the source's edges. Find the panel the OS
+            // arrangement puts beyond *that* edge and land on it in world
+            // coordinates, instead of clamping the raw pixel.
+            let x_exit = exit_x(new_x, old_mon);
+            let y_exit = exit_y(new_y, old_mon);
+            // A diagonal exit can have a candidate on both axes. The edge the
+            // cursor travelled furthest past is the one it actually crossed.
+            let prefer_x = match (&x_exit, &y_exit) {
+                (Some(x), Some(y)) => x.px >= y.px,
+                _ => true,
+            };
+            let across_x = x_exit
+                .as_ref()
+                .and_then(|e| dest_across_x(new_x, e, old_mon, monitors))
+                .map(|dest| land_across_x(old_x, old_y, new_x, old_mon, dest));
+            let across_y = y_exit
+                .as_ref()
+                .and_then(|e| dest_across_y(new_y, e, old_mon, monitors))
+                .map(|dest| land_across_y(old_x, old_y, new_y, old_mon, dest));
 
-            // Vertical twin of the above: new_y falls in a *different* monitor's
-            // y-span, so this is a vertical gap-zone crossing (stacked monitors
-            // with different OS x-offsets). Preserve physical-space x to find the
-            // correct landing column instead of clamping the raw pixel.
-            if let Some(dest_mon) =
-                monitor_for_y(new_y, monitors).filter(|m| m.identifier != old_mon.identifier)
-            {
-                let old_local_x = cursor_mapper::to_physical(
-                    Point {
-                        x: old_x as f32,
-                        y: old_y as f32,
-                    },
-                    old_mon,
-                )
-                .x;
-                let world_x = old_mon.position_mm.x + old_local_x;
-                let (dest_w_mm, _) = dest_mon.physical_size_mm();
-                let dest_world_left = dest_mon.position_mm.x;
-                let dest_world_right = dest_world_left + dest_w_mm;
-                if world_x < dest_world_left || world_x > dest_world_right {
-                    // Destination doesn't physically exist at this world x
-                    // (stacked monitors don't overlap here). Block the crossing.
-                    return pin_to_source(old_mon, new_x, new_y);
-                }
-                let target_local_x = world_x - dest_mon.position_mm.x;
-                let target_os_x = cursor_mapper::to_os_pos(
-                    Point {
-                        x: target_local_x,
-                        y: 0.0,
-                    },
-                    dest_mon,
-                )
-                .x;
-                let tx = (target_os_x as i32).clamp(
-                    dest_mon.bounds.x as i32,
-                    (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
-                );
-                let ty = new_y.clamp(
-                    dest_mon.bounds.y as i32,
-                    (dest_mon.bounds.y + dest_mon.bounds.h - 1.0) as i32,
-                );
-                return Some((tx, ty));
+            match if prefer_x {
+                across_x.or(across_y)
+            } else {
+                across_y.or(across_x)
+            } {
+                Some(Landing::At(tx, ty)) => correction(new_x, new_y, tx, ty),
+                // Nothing beyond that edge, or the layout puts no panel at this
+                // world coordinate: block inside the source bounds so the cursor
+                // slides along its edge instead of jumping somewhere arbitrary.
+                Some(Landing::Blocked) | None => pin_to_source(old_mon, new_x, new_y),
             }
-
-            // Same monitor x/y-span or no monitor at all: block inside source bounds.
-            pin_to_source(old_mon, new_x, new_y)
         }
 
         // ── Normal crossing: both monitors known ─────────────────────────
@@ -248,11 +386,7 @@ pub fn remap_transition(
                 (new_mon.bounds.y + new_mon.bounds.h - 1.0) as i32,
             );
 
-            if (tx - new_x).abs() < 1 && (ty - new_y).abs() < 1 {
-                return None;
-            }
-
-            Some((tx, ty))
+            correction(new_x, new_y, tx, ty)
         }
     }
 }
@@ -457,6 +591,90 @@ mod tests {
         assert!(
             tx > 165,
             "vertical gap-zone crossing should map right of the 1080p left edge, got x={tx}"
+        );
+    }
+
+    /// Leaving the *bottom* of a monitor must not land on one beside it. The
+    /// right-hand panel is taller in pixels, so its OS y-span covers the row
+    /// just below the source's bottom edge: a y-span match alone used to select
+    /// it and teleport the cursor sideways.
+    #[test]
+    fn bottom_exit_ignores_a_monitor_beside_the_source() {
+        let mut monitors = HashMap::new();
+        monitors.insert(
+            "left".into(),
+            make_monitor("left", 0.0, 0.0, 1920.0, 1080.0, 81.59),
+        );
+        monitors.insert(
+            "tall_right".into(),
+            make_monitor("tall_right", 1920.0, 0.0, 2560.0, 1440.0, 108.79),
+        );
+
+        // Straight down off the left panel, well inside its x-span.
+        let (tx, ty) = remap_transition(500, 1079, 500, 1080, &monitors)
+            .expect("expected the crossing to be blocked at the source's bottom edge");
+        assert_eq!(
+            (tx, ty),
+            (500, 1079),
+            "expected a pin to the source's bottom edge, not a jump onto tall_right"
+        );
+    }
+
+    /// A purely vertical exit must not be treated as a horizontal crossing just
+    /// because some other monitor's x-span happens to contain the raw x. Here
+    /// the panel above is offset right and stops 500 px short of the source, so
+    /// the raw destination sits in dead space that neither panel covers.
+    #[test]
+    fn vertical_exit_is_not_treated_as_horizontal() {
+        let mut monitors = HashMap::new();
+        monitors.insert(
+            "source".into(),
+            make_monitor("source", 0.0, 0.0, 1920.0, 1080.0, 81.59),
+        );
+        monitors.insert(
+            "above".into(),
+            make_monitor("above", 500.0, -1080.0, 1920.0, 580.0, 81.59),
+        );
+
+        // x=600 is inside `above`'s x-span, but the cursor left through the
+        // source's top edge, and `above` does not reach down to y=-1.
+        let (tx, ty) = remap_transition(600, 0, 600, -1, &monitors)
+            .expect("expected the crossing to be blocked at the source's top edge");
+        assert_eq!(
+            (tx, ty),
+            (600, 0),
+            "expected a pin to the source's top edge, got ({tx}, {ty})"
+        );
+    }
+
+    /// Two stacked monitors to the right both span the raw destination x. The
+    /// nearer one wins, and the pick must not depend on `HashMap` iteration
+    /// order, so building the same layout in either insertion order agrees.
+    #[test]
+    fn gap_zone_destination_is_nearest_and_order_independent() {
+        // `near` starts 80 px past the source's right edge, `far` 480 px past.
+        // Neither covers y=500, so the raw destination is a genuine gap.
+        let source = make_monitor("source", 0.0, 0.0, 1920.0, 1080.0, 81.59);
+        let near = make_monitor("near", 2000.0, -1080.0, 1920.0, 1080.0, 81.59);
+        let far = make_monitor("far", 2400.0, 2000.0, 1920.0, 1080.0, 81.59);
+
+        let mut forward = HashMap::new();
+        forward.insert("source".into(), source.clone());
+        forward.insert("near".into(), near.clone());
+        forward.insert("far".into(), far.clone());
+
+        let mut reverse = HashMap::new();
+        reverse.insert("far".into(), far);
+        reverse.insert("near".into(), near);
+        reverse.insert("source".into(), source);
+
+        let a = remap_transition(1919, 500, 2500, 500, &forward).expect("crossing");
+        let b = remap_transition(1919, 500, 2500, 500, &reverse).expect("crossing");
+        assert_eq!(a, b, "destination must not depend on insertion order");
+        assert!(
+            a.1 < 0,
+            "expected a landing on `near` (OS y in -1080..0), got y={}",
+            a.1
         );
     }
 }
