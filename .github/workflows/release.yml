@@ -51,7 +51,13 @@ jobs:
       - name: Sync Cargo.lock with new version
         run: cargo update -p rust_cursor
 
-      - name: Commit, tag, push develop, fast-forward main
+      # Before anything is pushed. This is the one configuration CI does not
+      # cover with coverage, and a tag pushed ahead of a failed build can only
+      # be undone by deleting a public tag.
+      - name: Build release binary
+        run: cargo build --release --no-default-features
+
+      - name: Commit locally
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
@@ -59,12 +65,17 @@ jobs:
           git add Cargo.toml Cargo.lock
           git commit -m "chore: release v${{ steps.version.outputs.version }}"
           git tag -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
+
+      # main first: it is a plain fast-forward push, so it is the step that
+      # fails if someone committed straight to main. Failing here leaves
+      # nothing public to clean up, whereas the same failure after the tag
+      # push leaves a tag with no release behind it.
+      - name: Push main, develop, and the tag
+        shell: bash
+        run: |
+          git push origin develop:main
           git push origin develop
           git push origin "v${{ steps.version.outputs.version }}"
-          git push origin develop:main
-
-      - name: Build release binary
-        run: cargo build --release --no-default-features
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

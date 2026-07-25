@@ -20,15 +20,33 @@ jobs:
       - run: cargo fmt --all -- --check
 
   clippy:
-    name: Clippy
+    # Every feature combination that ships, not just the default set. The
+    # interception backend and the cfg'd-out halves of the release build are
+    # only compiled here, so without these two extra legs they can rot without
+    # ever turning a build red.
+    name: Clippy (${{ matrix.name }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            features: ''
+          # What release.yml publishes.
+          - name: no default features
+            features: '--no-default-features'
+          - name: interception backend
+            features: '--features interception-backend'
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
+      # Also run them: some tests have cfg'd arms (`unknown_backend_keeps_calibration`),
+      # and compiling those is not the same as checking what they assert.
+      - run: cargo test ${{ matrix.features }}
 
   coverage:
     name: Test + coverage
