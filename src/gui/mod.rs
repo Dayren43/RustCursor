@@ -80,7 +80,7 @@ fn signal_parent_reload() {
 /// Called by the parent after the tray pump exits (Quit selected). Settings
 /// subprocesses are independent processes, so quitting the parent would
 /// otherwise leave their windows orphaned. Posts `WM_CLOSE` to every
-/// top-level window with the Settings title — the graceful equivalent of
+/// top-level window with the Settings title, the graceful equivalent of
 /// clicking X, so eframe unwinds and each subprocess exits on its own. A
 /// subprocess whose window isn't created yet is missed; that race is a few
 /// hundred ms wide and the leftover window is still individually closable.

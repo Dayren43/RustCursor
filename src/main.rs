@@ -27,7 +27,7 @@ use std::sync::{Arc, RwLock};
 fn main() {
     // Settings subprocess path: `RustCursor.exe --settings`. Launched by the
     // tray to run eframe in isolation. No input hook, no tray, no display
-    // listener — the parent owns those. On window close, this process exits
+    // listener: the parent owns those. On window close, this process exits
     // and all its memory + GL driver threads are reclaimed.
     if std::env::args().any(|a| a == "--settings") {
         gui::run_settings_subprocess();

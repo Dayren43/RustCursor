@@ -27,19 +27,25 @@ install-interception.exe /install
 
 ## Build and run
 
-Default build (lowlevel backend only, no external dependencies):
+Release build, and what the published exe is built with (lowlevel backend only, no external dependencies, no per-stroke logging):
 ```
 cargo build --release --no-default-features
 .\target\release\RustCursor.exe
 ```
 
-To include the interception backend (requires the driver and DLL, see [Backends](#backends)):
+Development build. The default `log` feature adds per-stroke diagnostics to `%LOCALAPPDATA%\RustCursor\cursor_log.txt` and the Settings **Log** tab that tails it, at the cost of file I/O and process-basename resolution on the input hot path:
 ```
-cargo build --release --features interception-backend
+cargo build --release
 .\target\release\RustCursor.exe
 ```
 
-The app runs silently with no console window. A tray icon appears in the notification area; right-click it for **Settings…** and **Quit RustCursor**. Per-stroke diagnostics are written to `%LOCALAPPDATA%\RustCursor\cursor_log.txt`.
+To include the interception backend (requires the driver and DLL, see [Backends](#backends)):
+```
+cargo build --release --no-default-features --features interception-backend
+.\target\release\RustCursor.exe
+```
+
+The app runs silently with no console window. A tray icon appears in the notification area; right-click it for **Settings…** and **Quit RustCursor**.
 
 When building with `--features interception-backend`, `interception.dll` must sit next to the exe at runtime. The DLL is not redistributed by the `interception-sys` crate or installed by the driver; it ships in the Interception release ZIP under `library/x64/`. `build.rs` copies it next to the built exe automatically; provide it via either of:
 
@@ -50,10 +56,10 @@ When building with `--features interception-backend`, `interception.dll` must si
 
 Right-clicking the tray and choosing **Settings…** opens a tabbed configuration window. Each click launches a separate short-lived `RustCursor.exe --settings` subprocess, so the GPU-accelerated window's driver overhead is only paid while Settings is open; closing the window exits that subprocess while the tray process keeps running. Edits are signalled back to the parent over a window message, which is why they hot-reload without a restart. Quitting from the tray closes any Settings windows still open.
 
-- **General**: input backend selector (`lowlevel` / `interception`), default monitor diagonal, and an auto-start-at-login toggle that wraps `schtasks` (prompts UAC when the running process isn't already elevated).
+- **General**: default monitor diagonal, and an auto-start-at-login toggle that wraps `schtasks` (prompts UAC when the running process isn't already elevated). Builds with `--features interception-backend` also get an input backend selector (`lowlevel` / `interception`); with only one backend compiled in there is nothing to select, so it is hidden.
 - **Monitors**: drag-to-arrange layout canvas at the top, each monitor drawn at its physical aspect ratio. Edges snap to neighbours within 10 mm; hold **Alt** during a drag to disable snap. A per-monitor numeric diagonal editor sits underneath for typed precision. Size and position edits hot-reload, so cursor crossings reflect changes in real time without a restart.
 - **Bypass**: add/remove process basenames whose foreground focus pauses cursor remapping (case-insensitive). Hot-reloads on every edit.
-- **Log**: live tail of `cursor_log.txt` with an Auto-refresh toggle (500 ms tick) and an Open-in-editor button.
+- **Log**: live tail of `cursor_log.txt` with an Auto-refresh toggle (500 ms tick) and an Open-in-editor button. Only present in builds with the `log` feature, since nothing writes the file otherwise.
 
 Backend changes still require a restart because the input loop thread captures the backend at spawn.
 

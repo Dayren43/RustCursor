@@ -1,11 +1,12 @@
 //! eframe application running in the Settings subprocess. The subprocess
-//! exists only while the window does — closing the X ends `run_native`, the
+//! exists only while the window does: closing the X ends `run_native`, the
 //! process exits, and all its memory + driver threads are reclaimed.
 
 use eframe::egui;
 
 use crate::gui::tabs::bypass::BypassTab;
 use crate::gui::tabs::general::GeneralTab;
+#[cfg(feature = "log")]
 use crate::gui::tabs::log::LogTab;
 use crate::gui::tabs::monitors::MonitorsTab;
 
@@ -15,6 +16,9 @@ enum Tab {
     General,
     Monitors,
     Bypass,
+    /// Gated with the tab itself: a release build has no `cursor_log.txt` to
+    /// tail, and a tab that can only ever show an error is worse than no tab.
+    #[cfg(feature = "log")]
     Log,
 }
 
@@ -23,6 +27,7 @@ struct SettingsApp {
     general: GeneralTab,
     monitors: MonitorsTab,
     bypass: BypassTab,
+    #[cfg(feature = "log")]
     log: LogTab,
 }
 
@@ -33,6 +38,7 @@ impl Default for SettingsApp {
             general: GeneralTab::new(),
             monitors: MonitorsTab::new(),
             bypass: BypassTab::new(),
+            #[cfg(feature = "log")]
             log: LogTab::new(),
         }
     }
@@ -69,6 +75,7 @@ impl eframe::App for SettingsApp {
                 ui.selectable_value(&mut self.tab, Tab::General, "General");
                 ui.selectable_value(&mut self.tab, Tab::Monitors, "Monitors");
                 ui.selectable_value(&mut self.tab, Tab::Bypass, "Bypass");
+                #[cfg(feature = "log")]
                 ui.selectable_value(&mut self.tab, Tab::Log, "Log");
             });
         });
@@ -77,6 +84,7 @@ impl eframe::App for SettingsApp {
             Tab::General => self.general.ui(ui),
             Tab::Monitors => self.monitors.ui(ui),
             Tab::Bypass => self.bypass.ui(ui),
+            #[cfg(feature = "log")]
             Tab::Log => self.log.ui(ui),
         });
     }

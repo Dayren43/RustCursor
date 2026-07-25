@@ -24,8 +24,13 @@ target
 # this catches the CWD fallback path)
 cursor_log.txt
 
-# Vendored Interception runtime DLL — ships with the driver release, not redistributed here
+# Vendored Interception runtime DLL: ships with the driver release, not redistributed here
 vendor/
+
+# Hand-built exes for local testing. Built into a scratch CARGO_TARGET_DIR and
+# copied here, because linking into target/release fails while the tray app is
+# running and holding a lock on its own exe.
+builds/
 
 # Claude Code session state
 .claude/
