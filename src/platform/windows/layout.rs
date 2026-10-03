@@ -22,7 +22,7 @@ use windows::core::{PCWSTR, w};
 
 use rust_cursor::core::Monitor;
 
-use super::monitors::{build_monitor_map, enumerate_hwids};
+use super::monitors::{build_monitor_map, install_matching_profile};
 
 /// Private message posted by the Settings subprocess after it writes
 /// `config.toml`. Handler re-reads the file, refreshes the runtime
@@ -81,26 +81,19 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
-        WM_DISPLAYCHANGE => {
-            if let Some(monitors) = MONITORS.get() {
-                let fresh = build_monitor_map();
-                *monitors.write().unwrap() = fresh;
-            }
-            LRESULT(0)
-        }
-        WM_RUSTCURSOR_RELOAD => {
-            // Settings subprocess wrote config.toml and posted this. Re-load
-            // config, re-resolve the active profile for currently-connected
-            // HWIDs, hot-swap the runtime SIZES/BYPASS lookups, then rebuild
-            // the monitor map so cursor crossings reflect the new layout.
+        // Both messages re-resolve the active profile before rebuilding.
+        // WM_DISPLAYCHANGE needs it as much as the reload does: docking or
+        // undocking changes the connected HWID set, and keeping the old
+        // profile's lookups would give the new monitors the default diagonal
+        // and seeded positions until the next restart. The reload message is
+        // the Settings subprocess saying it wrote config.toml, so it also
+        // refreshes the bypass list.
+        WM_DISPLAYCHANGE | WM_RUSTCURSOR_RELOAD => {
             let cfg = rust_cursor::config::Config::load();
-            let hwids = enumerate_hwids();
-            let profile_monitors = cfg
-                .active_profile(&hwids)
-                .map(|p| p.monitors.clone())
-                .unwrap_or_default();
-            rust_cursor::config::install_active_profile(profile_monitors, cfg.default_size_in);
-            rust_cursor::config::install_bypass_processes(cfg.bypass_processes);
+            install_matching_profile(&cfg);
+            if msg == WM_RUSTCURSOR_RELOAD {
+                rust_cursor::config::install_bypass_processes(cfg.bypass_processes);
+            }
             if let Some(monitors) = MONITORS.get() {
                 let fresh = build_monitor_map();
                 *monitors.write().unwrap() = fresh;

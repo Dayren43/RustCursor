@@ -92,12 +92,6 @@ unsafe extern "system" fn ll_callback(n_code: i32, w_param: WPARAM, l_param: LPA
 
     let info = unsafe { &*(l_param.0 as *const MSLLHOOKSTRUCT) };
 
-    // Ignore injected events: our own `SetCursorPos` will produce one, and
-    // we'd otherwise recurse on it. Also skips other input-injecting tools.
-    if info.flags & LLMHF_INJECTED != 0 {
-        return pass_through();
-    }
-
     let new_pt = info.pt;
     let Some(mutex) = STATE.get() else {
         return pass_through();
@@ -106,6 +100,16 @@ unsafe extern "system" fn ll_callback(n_code: i32, w_param: WPARAM, l_param: LPA
 
     let old_pt = state.prev_pt;
     state.prev_pt = new_pt;
+
+    // Don't remap injected events: our own `SetCursorPos` will produce one,
+    // and we'd otherwise recurse on it. Also skips other input-injecting
+    // tools (pen tablets, remote desktop). Their position is still recorded
+    // above: if a tablet moves the cursor to another monitor and `prev_pt`
+    // stayed behind, the next real mouse move would look like a crossing
+    // from the old monitor and the cursor would jump.
+    if info.flags & LLMHF_INJECTED != 0 {
+        return pass_through();
+    }
 
     if state.focus.should_skip_remap() {
         return pass_through();

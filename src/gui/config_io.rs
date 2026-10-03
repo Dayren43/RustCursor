@@ -29,9 +29,18 @@ impl ConfigDoc {
         Ok(Self { path, doc })
     }
 
+    /// Write to a sibling temp file, then rename it over `config.toml`, so a
+    /// crash or full disk mid-write leaves the old file intact instead of a
+    /// truncated one that would load as all defaults. `rename` replaces an
+    /// existing file on Windows (`MOVEFILE_REPLACE_EXISTING`).
     pub fn save(&self) -> Result<(), String> {
-        std::fs::write(&self.path, self.doc.to_string())
-            .map_err(|e| format!("write {}: {}", self.path.display(), e))
+        let tmp = self.path.with_extension("toml.tmp");
+        std::fs::write(&tmp, self.doc.to_string())
+            .map_err(|e| format!("write {}: {}", tmp.display(), e))?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("replace {}: {}", self.path.display(), e)
+        })
     }
 
     /// Only exists alongside the General tab's backend section: a build with
@@ -46,7 +55,7 @@ impl ConfigDoc {
     }
 
     pub fn set_default_size_in(&mut self, inches: f32) {
-        self.doc["default_size_in"] = value(inches as f64);
+        self.doc["default_size_in"] = value(tidy(inches));
     }
 
     /// Overwrite the `bypass_processes` array with the given list. The order
@@ -129,7 +138,7 @@ impl ConfigDoc {
                 == Some(hwid);
             if same {
                 let tbl = monitors.get_mut(i).expect("monitor index in bounds");
-                tbl["size_in"] = value(size_in as f64);
+                tbl["size_in"] = value(tidy(size_in));
                 if let Some(pos) = position_mm {
                     tbl["position_mm"] = value(position_array(pos));
                 }
@@ -139,7 +148,7 @@ impl ConfigDoc {
 
         let mut tbl = Table::new();
         tbl["hwid"] = value(hwid);
-        tbl["size_in"] = value(size_in as f64);
+        tbl["size_in"] = value(tidy(size_in));
         if let Some(pos) = position_mm {
             tbl["position_mm"] = value(position_array(pos));
         }
@@ -149,7 +158,45 @@ impl ConfigDoc {
 
 fn position_array(pos: (f32, f32)) -> Array {
     let mut arr = Array::new();
-    arr.push(pos.0 as f64);
-    arr.push(pos.1 as f64);
+    arr.push(tidy(pos.0));
+    arr.push(tidy(pos.1));
     arr
+}
+
+/// Widen an `f32` to the `f64` with the same shortest decimal form. A plain
+/// `as f64` keeps the f32's binary error, so a diagonal typed as 23.8 would be
+/// written to the hand-editable file as `23.799999237060547`.
+fn tidy(v: f32) -> f64 {
+    v.to_string().parse().unwrap_or(v as f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tidy_keeps_the_typed_decimal() {
+        assert_eq!(tidy(23.8), 23.8);
+        assert_eq!(tidy(27.0), 27.0);
+        assert_eq!(tidy(597.5), 597.5);
+    }
+
+    #[test]
+    fn written_sizes_have_no_float_noise() {
+        let mut doc = ConfigDoc {
+            path: PathBuf::new(),
+            doc: DocumentMut::new(),
+        };
+        doc.set_default_size_in(23.8);
+        doc.upsert_profile_monitor(
+            &["MONITOR\\AAA1111".to_string()],
+            "MONITOR\\AAA1111",
+            31.5,
+            Some((597.9, 12.3)),
+            "test",
+        );
+        let text = doc.doc.to_string();
+        assert!(text.contains("default_size_in = 23.8\n"), "{text}");
+        assert!(text.contains("position_mm = [597.9, 12.3]"), "{text}");
+    }
 }
