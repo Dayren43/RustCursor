@@ -192,7 +192,7 @@ fn land_across_x(
             dest_mon.bounds.x as i32,
             (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
         ),
-        (target_os_y as i32).clamp(
+        (target_os_y.round() as i32).clamp(
             dest_mon.bounds.y as i32,
             (dest_mon.bounds.y + dest_mon.bounds.h - 1.0) as i32,
         ),
@@ -230,7 +230,7 @@ fn land_across_y(
     )
     .x;
     Landing::At(
-        (target_os_x as i32).clamp(
+        (target_os_x.round() as i32).clamp(
             dest_mon.bounds.x as i32,
             (dest_mon.bounds.x + dest_mon.bounds.w - 1.0) as i32,
         ),
@@ -314,13 +314,26 @@ pub fn remap_transition(
                 return None;
             }
 
-            // Determine crossing direction via monitor centres.
-            let old_cx = old_mon.bounds.x + old_mon.bounds.w / 2.0;
-            let old_cy = old_mon.bounds.y + old_mon.bounds.h / 2.0;
-            let new_cx = new_mon.bounds.x + new_mon.bounds.w / 2.0;
-            let new_cy = new_mon.bounds.y + new_mon.bounds.h / 2.0;
-
-            let horizontal_crossing = (new_cx - old_cx).abs() >= (new_cy - old_cy).abs();
+            // Crossing direction comes from the source edge the cursor left
+            // through, the same rule the gap-zone path uses. Comparing monitor
+            // centres instead misreads offset stacks: a narrow panel under the
+            // right end of an ultrawide has centres further apart in x than in
+            // y, so a move straight down was treated as horizontal and blocked.
+            let horizontal_crossing = match (exit_x(new_x, old_mon), exit_y(new_y, old_mon)) {
+                (Some(x), Some(y)) => x.px >= y.px,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                // Unreachable for disjoint OS rects: the raw point is on a
+                // different monitor, so it is outside the source on some axis.
+                // Kept as a total fallback rather than a panic on the hot path.
+                (None, None) => {
+                    let old_cx = old_mon.bounds.x + old_mon.bounds.w / 2.0;
+                    let old_cy = old_mon.bounds.y + old_mon.bounds.h / 2.0;
+                    let new_cx = new_mon.bounds.x + new_mon.bounds.w / 2.0;
+                    let new_cy = new_mon.bounds.y + new_mon.bounds.h / 2.0;
+                    (new_cx - old_cx).abs() >= (new_cy - old_cy).abs()
+                }
+            };
 
             let old_local = cursor_mapper::to_physical(
                 Point {
@@ -383,11 +396,11 @@ pub fn remap_transition(
                 y: target_world.y - new_mon.position_mm.y,
             };
             let target_os = cursor_mapper::to_os_pos(target_local, new_mon);
-            let tx = (target_os.x as i32).clamp(
+            let tx = (target_os.x.round() as i32).clamp(
                 new_mon.bounds.x as i32,
                 (new_mon.bounds.x + new_mon.bounds.w - 1.0) as i32,
             );
-            let ty = (target_os.y as i32).clamp(
+            let ty = (target_os.y.round() as i32).clamp(
                 new_mon.bounds.y as i32,
                 (new_mon.bounds.y + new_mon.bounds.h - 1.0) as i32,
             );
@@ -650,6 +663,46 @@ mod tests {
             (tx, ty),
             (600, 0),
             "expected a pin to the source's top edge, got ({tx}, {ty})"
+        );
+    }
+
+    /// A 1080p panel stacked under the right end of a 3440 px ultrawide. The
+    /// monitor centres are further apart in x (1640 px) than in y (1260 px),
+    /// which the old centre-based direction check read as a horizontal
+    /// crossing: moving straight down was blocked at the ultrawide's bottom
+    /// edge, and moving up skipped the physical-x correction. Positions are
+    /// what default seeding produces for this stack (touching, OS x-offset
+    /// kept), and the physical sizes differ so the correction is visible.
+    #[test]
+    fn offset_stack_crosses_vertically_both_ways() {
+        let mut top = make_monitor("top", 0.0, 0.0, 3440.0, 1440.0, 109.68);
+        let mut bottom = make_monitor("bottom", 2400.0, 1440.0, 1920.0, 1080.0, 91.79);
+        let (top_w_mm, top_h_mm) = top.physical_size_mm();
+        top.position_mm = Point { x: 0.0, y: 0.0 };
+        bottom.position_mm = Point {
+            x: 2400.0 * top_w_mm / 3440.0,
+            y: top_h_mm,
+        };
+        let mut monitors = HashMap::new();
+        monitors.insert("top".into(), top);
+        monitors.insert("bottom".into(), bottom);
+
+        let (dx, dy) = remap_transition(3000, 1439, 3000, 1440, &monitors)
+            .expect("expected a physical-x correction crossing down");
+        assert_eq!(dy, 1440, "expected to land on the bottom panel, got y={dy}");
+        assert!(
+            (2400..3000).contains(&dx),
+            "expected x pulled left onto the denser panel, got x={dx}"
+        );
+
+        // And back up from where the cursor landed: world x is preserved, so
+        // it returns to (about) where it started.
+        let (ux, uy) = remap_transition(dx, 1440, dx, 1439, &monitors)
+            .expect("expected a physical-x correction crossing up");
+        assert_eq!(uy, 1439, "expected to land on the top panel, got y={uy}");
+        assert!(
+            (ux - 3000).abs() <= 2,
+            "expected the round trip to return near x=3000, got x={ux}"
         );
     }
 
