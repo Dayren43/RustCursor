@@ -126,15 +126,27 @@ pub fn setup_dpi_awareness() {
     }
 }
 
-/// Connected HWIDs in stable sorted order. Used at startup to pick the
-/// active `[[profile]]` from `config.toml`.
-pub fn enumerate_hwids() -> Vec<String> {
+/// Connected HWIDs in stable sorted order. Used by [`install_matching_profile`]
+/// to pick the active `[[profile]]` from `config.toml`.
+fn enumerate_hwids() -> Vec<String> {
     let mut hwids: Vec<String> = enumerate_monitors()
         .into_iter()
         .filter_map(|m| m.hwid)
         .collect();
     hwids.sort();
     hwids
+}
+
+/// Install the sizes and positions of the `[[profile]]` whose HWID set matches
+/// the monitors connected right now, or none (defaults only) if no profile
+/// matches. Must run before `build_monitor_map`, which reads them through
+/// `config::size_for` / `config::position_for`.
+pub fn install_matching_profile(cfg: &rust_cursor::config::Config) {
+    let profile_monitors = cfg
+        .active_profile(&enumerate_hwids())
+        .map(|p| p.monitors.clone())
+        .unwrap_or_default();
+    rust_cursor::config::install_active_profile(profile_monitors, cfg.default_size_in);
 }
 
 /// Returns true when the OS arrangement is predominantly a vertical stack:

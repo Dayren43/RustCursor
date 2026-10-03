@@ -41,14 +41,9 @@ fn main() {
     // Resolve the active profile from currently-connected HWIDs. If a
     // matching `[[profile]]` exists, its per-HWID size entries take precedence;
     // otherwise the lookup falls back to `default_size_in`.
-    // `install_active_profile` must run before any `build_monitor_map` call
-    // because that call consults `size_for`.
-    let connected_hwids = platform::windows::enumerate_hwids();
-    let profile_monitors = config
-        .active_profile(&connected_hwids)
-        .map(|p| p.monitors.clone())
-        .unwrap_or_default();
-    rust_cursor::config::install_active_profile(profile_monitors, config.default_size_in);
+    // This must run before any `build_monitor_map` call because that call
+    // consults `size_for`.
+    platform::windows::install_matching_profile(&config);
 
     let monitors = Arc::new(RwLock::new(platform::windows::build_monitor_map()));
 

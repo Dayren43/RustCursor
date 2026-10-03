@@ -48,12 +48,7 @@ const LISTENER_CLASS: &str = "RustCursorDisplayListener";
 ///     the edit without waiting for the user to close Settings).
 pub(crate) fn reload_active_profile() {
     let cfg = rust_cursor::config::Config::load();
-    let hwids = crate::platform::windows::enumerate_hwids();
-    let profile_monitors = cfg
-        .active_profile(&hwids)
-        .map(|p| p.monitors.clone())
-        .unwrap_or_default();
-    rust_cursor::config::install_active_profile(profile_monitors, cfg.default_size_in);
+    crate::platform::windows::install_matching_profile(&cfg);
     rust_cursor::config::install_bypass_processes(cfg.bypass_processes);
     signal_parent_reload();
 }
@@ -128,11 +123,6 @@ pub fn spawn_settings_subprocess() {
 pub fn run_settings_subprocess() {
     crate::platform::windows::setup_dpi_awareness();
     let cfg = rust_cursor::config::Config::load();
-    let hwids = crate::platform::windows::enumerate_hwids();
-    let profile_monitors = cfg
-        .active_profile(&hwids)
-        .map(|p| p.monitors.clone())
-        .unwrap_or_default();
-    rust_cursor::config::install_active_profile(profile_monitors, cfg.default_size_in);
+    crate::platform::windows::install_matching_profile(&cfg);
     app::run();
 }
