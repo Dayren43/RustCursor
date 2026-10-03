@@ -1,21 +1,22 @@
-//! Cursor monitor-transition remapper using the Interception kernel driver.
+//! Cursor monitor-transition remapper.
 //!
-//! When the cursor crosses between monitors of different resolutions, the Y position
-//! is remapped to the equivalent physical height on the destination monitor. Both
-//! monitors are assumed to be the same physical diagonal size but may differ in
-//! resolution.
+//! When the cursor crosses between monitors, its position is carried through a
+//! shared physical-millimetre space, so it keeps its physical height (or
+//! physical x, for vertical crossings) whatever each monitor's resolution,
+//! diagonal or mounting offset. Crossings into places where the destination
+//! has no panel are blocked, and the cursor slides along the source's edge.
 //!
 //! Architecture:
 //!  - `platform::windows` owns the Windows runtime: monitor enumeration, DPI setup,
-//!    the Interception event loop, and the system-tray UI. A future
+//!    the input backends (the `WH_MOUSE_LL` hook by default, Interception behind
+//!    the `interception-backend` feature), and the system-tray UI. A future
 //!    `platform::linux` would implement the same surface.
-//!  - `RustCursor::remapper` contains the platform-agnostic crossing logic.
-//!  - `RustCursor::core` contains the Monitor struct and physical↔pixel mapping math.
+//!  - `gui` is the Settings window, run as a `--settings` subprocess.
+//!  - `rust_cursor::remapper` contains the platform-agnostic crossing logic.
+//!  - `rust_cursor::core` contains the Monitor struct and physical↔pixel mapping math.
+//!  - `rust_cursor::config` loads `config.toml` and holds the live lookups.
 //!
-//! Prerequisites:
-//!   Install the Interception driver (run as administrator, then reboot):
-//!     install-interception.exe /install
-//!   Download: https://github.com/oblitum/Interception/releases
+//! See the README for build features and the Interception driver setup.
 
 #![windows_subsystem = "windows"]
 

@@ -67,7 +67,7 @@ Backend changes still require a restart because the input loop thread captures t
 
 While focused on a fullscreen DirectX/Vulkan/OpenGL app, RustCursor automatically forwards strokes unchanged so games can keep cursor capture. Detection uses Windows' own `SHQueryUserNotificationState`, the same signal used to suppress toast notifications during gameplay, so F11 browsers, fullscreen video, and PowerPoint slideshows are *not* paused.
 
-For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list via the Settings GUI's **Bypass** tab. The underlying file is `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run); hand-edits hot-reload, no restart required.
+For windowed-fullscreen titles that aren't auto-detected, add their executable basename to the bypass list via the Settings GUI's **Bypass** tab. The underlying file is `%LOCALAPPDATA%\RustCursor\config.toml` (created with comments on first run); edits made in the Bypass tab apply immediately, but hand-edits to the file need a RustCursor restart.
 
 ## Backends
 
